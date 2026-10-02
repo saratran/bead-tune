@@ -1,0 +1,196 @@
+import { describe, expect, test } from "bun:test";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { App } from "../App";
+import { listProjects } from "../lib/projects";
+import { mockPixels, PNG_DATA_URL } from "../test/canvas-mock";
+
+const redSquare = (w: number, h: number) => {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const inside = x >= w / 4 && x < (3 * w) / 4 && y >= h / 4 && y < (3 * h) / 4;
+      data.set(inside ? [200, 30, 40, 255] : [255, 255, 255, 255], (y * w + x) * 4);
+    }
+  }
+  return data;
+};
+
+const pill = () => screen.getByText(/beads · \d+ colours?$/).textContent;
+const cellPx = 600 / 52;
+const at = (x: number, y: number) => ({ clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });
+
+async function loadSample() {
+  mockPixels(redSquare);
+  const utils = render(<App />);
+  fireEvent.click(screen.getByText("Try a sample image"));
+  await waitFor(() => expect(utils.container.querySelector(".pattern-canvas")).toBeTruthy());
+  return utils;
+}
+
+const dialog = () => screen.getByRole("dialog", { name: "Projects" });
+// Slider <output>s also have role "status", so find the toast by class.
+const toast = () => document.querySelector(".toast")?.textContent;
+const png = () => {
+  const bytes = Uint8Array.from(atob(PNG_DATA_URL.split(",")[1]!), (c) => c.charCodeAt(0));
+  return new File([bytes], "dog.png", { type: "image/png" });
+};
+
+async function saveAs(name: string) {
+  fireEvent.click(screen.getByText("Projects"));
+  const input = within(dialog()).getByLabelText(/Save this pattern|Current project/);
+  fireEvent.change(input, { target: { value: name } });
+  fireEvent.click(within(dialog()).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(within(dialog()).getByText(name)).toBeTruthy());
+}
+
+describe("projects in the app", () => {
+  test("the dialog explains that an image is needed first", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByText("Projects"));
+    expect(within(dialog()).getByText(/Add an image first/)).toBeTruthy();
+    expect((within(dialog()).getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(within(dialog()).getByText("No saved projects yet.")).toBeTruthy());
+    expect((screen.getAllByText("Save")[0] as HTMLButtonElement).disabled).toBe(true); // topbar Save
+  });
+
+  test("save names the project, defaulting to the image name", async () => {
+    await loadSample();
+    fireEvent.click(screen.getByText("Projects"));
+    expect((within(dialog()).getByLabelText("Save this pattern") as HTMLInputElement).value).toBe("sample");
+    fireEvent.change(within(dialog()).getByLabelText("Save this pattern"), { target: { value: "Berry" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(within(dialog()).getByText("Berry")).toBeTruthy());
+    expect(toast()).toBe("Saved “Berry”");
+    expect(within(dialog()).getByText(/52 beads wide/)).toBeTruthy();
+    const [saved] = await listProjects();
+    expect(saved).toMatchObject({ name: "Berry", imageName: "sample" });
+    expect(saved!.thumbnail).toStartWith("data:image/png");
+  });
+
+  test("shows unsaved changes and saves them in place", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    expect(screen.queryByLabelText("Unsaved changes") === null).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("Remove background"));
+    await waitFor(() => expect(screen.getByLabelText("Unsaved changes")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("Save")[0]!); // topbar quick save
+    await waitFor(() => expect(screen.queryByLabelText("Unsaved changes") === null).toBe(true));
+    const all = await listProjects();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.state.image.removeBackground).toBe(true);
+  });
+
+  test("Ctrl/⌘+S saves the open project", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    fireEvent.click(screen.getByText("78"));
+    await waitFor(() => expect(screen.getByLabelText("Unsaved changes")).toBeTruthy());
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    await waitFor(() => expect(screen.queryByLabelText("Unsaved changes") === null).toBe(true));
+    expect((await listProjects())[0]!.state.width).toBe(78);
+  });
+
+  test("Ctrl/⌘+S without a project opens the save dialog", async () => {
+    await loadSample();
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    expect(dialog()).toBeTruthy();
+  });
+
+  test("opening a project restores its settings, colour edits and hand edits", async () => {
+    const { container } = await loadSample();
+    // Settings + a hand edit.
+    fireEvent.click(screen.getByRole("radio", { name: "Sharp" }));
+    fireEvent.click(screen.getByText("Edit beads"));
+    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
+    const canvas = container.querySelector(".pattern-canvas")!;
+    fireEvent.pointerDown(canvas, at(0, 0));
+    fireEvent.pointerUp(canvas, at(0, 0));
+    await waitFor(() => expect(pill()).toBe("2,703 beads · 2 colours"));
+    fireEvent.click(screen.getByText("Done editing"));
+    await saveAs("Berry");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+
+    // Start over with different settings.
+    fireEvent.click(screen.getByRole("radio", { name: "Smooth" }));
+    fireEvent.click(screen.getByText("104"));
+    await waitFor(() => expect(screen.queryByText(/edited by hand/) === null).toBe(true));
+
+    // Open it again.
+    fireEvent.click(screen.getByText("Projects"));
+    fireEvent.click(await within(dialog()).findByRole("button", { name: "Open" }));
+    await waitFor(() => expect(screen.queryByRole("dialog") === null).toBe(true));
+    await waitFor(() => expect(pill()).toBe("2,703 beads · 2 colours"));
+    expect(screen.getByRole("radio", { name: "Sharp" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("52").className).toBe("on");
+    expect(screen.getByText("1 bead edited by hand")).toBeTruthy();
+    expect(toast()).toBe("Opened “Berry”");
+    await waitFor(() => expect(screen.queryByLabelText("Unsaved changes") === null).toBe(true));
+    expect(screen.getByTitle("Saved").textContent).toBe("Berry");
+  });
+
+  test("a new image starts a new unsaved project", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    expect(screen.getByTitle("Saved")).toBeTruthy();
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [png()] } });
+    await waitFor(() => expect(screen.queryByTitle("Saved") === null).toBe(true));
+    expect(screen.queryByTitle("Unsaved changes") === null).toBe(true);
+  });
+
+  test("save as copy keeps the original", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    fireEvent.change(within(dialog()).getByLabelText("Current project"), { target: { value: "Berry 2" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save as copy" }));
+    await waitFor(() => expect(within(dialog()).getByText("Berry 2")).toBeTruthy());
+    expect((await listProjects()).map((p) => p.name).sort()).toEqual(["Berry", "Berry 2"]);
+    expect(screen.getByTitle("Saved").textContent).toBe("Berry 2");
+  });
+
+  test("rename and delete from the list", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    const list = () => dialog().querySelector(".project-list")!;
+
+    fireEvent.click(within(list() as HTMLElement).getByRole("button", { name: "Rename" }));
+    fireEvent.change(within(dialog()).getByLabelText("New name"), { target: { value: "Strawberry" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(within(list() as HTMLElement).getByText("Strawberry")).toBeTruthy());
+    expect(screen.getByTitle("Saved").textContent).toBe("Strawberry"); // open project renamed too
+
+    fireEvent.click(within(list() as HTMLElement).getByRole("button", { name: "Delete" }));
+    expect(within(dialog()).getByText("Delete?")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Keep" }));
+    expect(within(dialog()).queryByText("Delete?") === null).toBe(true);
+
+    fireEvent.click(within(list() as HTMLElement).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(list() as HTMLElement).getAllByRole("button", { name: "Delete" })[0]!);
+    await waitFor(() => expect(within(dialog()).getByText("No saved projects yet.")).toBeTruthy());
+    expect(screen.queryByTitle("Saved") === null).toBe(true); // no longer an open project
+    expect(await listProjects()).toEqual([]);
+  });
+
+  test("exports are named after the project", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    const downloads: string[] = [];
+    const realClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    };
+    try {
+      fireEvent.click(screen.getByText("Export"));
+      fireEvent.click(screen.getByText(/^Download /));
+      await waitFor(() => expect(downloads[0]).toStartWith("Berry-bead-pattern."));
+    } finally {
+      HTMLAnchorElement.prototype.click = realClick;
+    }
+  });
+});

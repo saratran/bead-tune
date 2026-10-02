@@ -27,6 +27,9 @@ bun run build    # static site in dist/
 - Brightness / contrast / saturation
 - Hand editing: paint, erase and pick colours bead by bead, with undo
 - Works on phones: fits narrow screens, touch-sized controls, drag-to-paint on touch
+- Projects: save the image and every setting (including colour swaps and hand edits) under a
+  name, then reopen, rename, copy or delete them from a list. Stored in this browser's
+  IndexedDB only; Ctrl/⌘+S saves
 - Bead shopping list; click a bead or colour to highlight, swap or remove colours
 - Display as squares (default), beads, crosses or dots, with optional colour codes
 - Export dialog with live preview: PNG or PDF, size L/M/S, cell shape, grid, analysis

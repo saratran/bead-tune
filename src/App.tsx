@@ -1,19 +1,21 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BeadList } from "./components/BeadList";
 import { ColorPicker } from "./components/ColorPicker";
 import { Dropzone } from "./components/Dropzone";
 import { DEFAULT_IMAGE_SETTINGS, ImageOptions, type ImageSettings } from "./components/ImageOptions";
 import { PatternView, type EditTool } from "./components/PatternView";
+import { ProjectsDialog } from "./components/ProjectsDialog";
 import { applyEdits, type Edits } from "./lib/cleanup";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
-import { applySwaps } from "./lib/pattern";
+import { applySwaps, type Pattern } from "./lib/pattern";
 import { buildPattern } from "./lib/pipeline";
+import { loadProjectImage, requestPersistentStorage, saveProject, type ProjectMeta, type ProjectState } from "./lib/projects";
 import { canvasSource } from "./lib/sampling";
 import { ExportDialog } from "./components/ExportDialog";
 import { ShapePicker } from "./components/ShapePicker";
 import { Toggle } from "./components/Toggle";
 import { DEFAULT_EXPORT, type ExportSettings } from "./lib/export";
-import type { CellShape } from "./lib/render";
+import { drawPattern, type CellShape } from "./lib/render";
 import { makeSampleImage } from "./lib/sample";
 
 const WIDTH_PRESETS = [52, 78, 104];
@@ -68,19 +70,53 @@ function saveOwned(v: Record<string, string[]>) {
   } catch {}
 }
 
-function loadImage(file: File): Promise<HTMLImageElement> {
+/** Decodes an image file. Uses a data URL so there's no object URL to revoke later. */
+function loadImage(file: Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Couldn't read that image."));
-    img.src = url;
+    const fail = () => reject(new Error("Couldn't read that image."));
+    const reader = new FileReader();
+    reader.onerror = fail;
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = fail;
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
   });
 }
 
 type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | null;
 
 const MAX_UNDO = 50;
+const THUMB_SIZE = 160;
+
+/** Re-encodes an image as PNG (for images that don't come from a file, like the sample). */
+function imageToBlob(img: HTMLImageElement): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  canvas.getContext("2d")!.drawImage(img, 0, 0);
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't save the image."))), "image/png"));
+}
+
+/** Small square-cell picture of the pattern for the project list. */
+function makeThumbnail(p: Pattern): string {
+  const cell = Math.max(1, Math.floor(THUMB_SIZE / Math.max(p.width, p.height)));
+  const canvas = document.createElement("canvas");
+  canvas.width = p.width * cell;
+  canvas.height = p.height * cell;
+  drawPattern(canvas.getContext("2d")!, p, {
+    cell,
+    shape: "square",
+    codes: false,
+    boardSize: p.width,
+    showBoards: false,
+    background: "#ffffff",
+    gridColor: "rgba(0, 0, 0, 0)",
+  });
+  return canvas.toDataURL("image/png");
+}
 
 /** Darkest colour in a palette — the natural default for outlines. */
 function darkest(colors: BeadColor[]): BeadColor {
@@ -89,7 +125,14 @@ function darkest(colors: BeadColor[]): BeadColor {
 
 export function App() {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
+  const [imageBlob, setImageBlob] = useState<Blob | null>(null);
   const [fileName, setFileName] = useState("pattern");
+  const [project, setProject] = useState<{ id: string; name: string } | null>(null);
+  const [savedJson, setSavedJson] = useState<string | null>(null);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Set when a project was just opened: the next state snapshot is its "saved" state.
+  const markSaved = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const [brandId, setBrandId] = useState(DEFAULT_BRAND_ID);
@@ -147,19 +190,38 @@ export function App() {
     setUndoStack([]);
   }, []);
 
-  useEffect(resetEdits, [brandId, image, resetEdits]);
-  useEffect(clearHandEdits, [brandId, image, clearHandEdits]);
-  useEffect(() => setPickingBg(false), [image]);
+  /** A new image starts a new, unsaved project with no colour or hand edits. */
+  const startImage = useCallback(
+    (img: HTMLImageElement, blob: Blob, name: string) => {
+      setImage(img);
+      setImageBlob(blob);
+      setFileName(name);
+      setProject(null);
+      setSavedJson(null);
+      setPickingBg(false);
+      resetEdits();
+      clearHandEdits();
+    },
+    [resetEdits, clearHandEdits],
+  );
 
-  const onFile = useCallback(async (file: File) => {
-    try {
-      setError(null);
-      setImage(await loadImage(file));
-      setFileName(file.name.replace(/\.[^.]+$/, "") || "pattern");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
+  const onFile = useCallback(
+    async (file: File) => {
+      try {
+        setError(null);
+        startImage(await loadImage(file), file, file.name.replace(/\.[^.]+$/, "") || "pattern");
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [startImage],
+  );
+
+  const changeBrand = (id: string) => {
+    setBrandId(id);
+    resetEdits();
+    clearHandEdits();
+  };
 
   const palette = useMemo(
     () =>
@@ -192,11 +254,9 @@ export function App() {
 
   const swapped = useMemo(() => (result ? applySwaps(result.pattern, swaps) : null), [result, swaps]);
 
-  // Hand edits only make sense on a grid of the size they were made on.
+  // Hand edits only apply to a grid of the size they were made on; they're set
+  // aside (not lost) while the size differs, and replaced by the next stroke.
   const editsFit = swapped && edits.w === swapped.width && edits.h === swapped.height;
-  useEffect(() => {
-    if (swapped && !editsFit && edits.map.size > 0) clearHandEdits();
-  }, [swapped, editsFit, edits.map.size, clearHandEdits]);
 
   const pattern = useMemo(() => (swapped && editsFit ? applyEdits(swapped, edits.map) : swapped), [swapped, editsFit, edits]);
 
@@ -279,6 +339,106 @@ export function App() {
     if (highlightId === c.id) setHighlightId(null);
   };
 
+  const projectState: ProjectState = useMemo(
+    () => ({
+      version: 1,
+      brandId,
+      width,
+      boardSize,
+      image: imageSettings,
+      outlineId,
+      ownedOnly,
+      excluded: [...excluded],
+      swaps: [...swaps].map(([from, to]) => [from, to.id]),
+      edits: { w: edits.w, h: edits.h, cells: [...edits.map].map(([i, c]) => [i, c?.id ?? null]) },
+    }),
+    [brandId, width, boardSize, imageSettings, outlineId, ownedOnly, excluded, swaps, edits],
+  );
+  const projectJson = useMemo(() => JSON.stringify(projectState), [projectState]);
+  const dirty = !!project && projectJson !== savedJson;
+
+  useEffect(() => {
+    if (!markSaved.current) return;
+    markSaved.current = false;
+    setSavedJson(projectJson);
+  }, [projectJson]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 2500);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  const save = async (name: string, asNew = false) => {
+    if (!imageBlob || !pattern) throw new Error("Add an image first.");
+    const saved = await saveProject({
+      id: asNew ? undefined : project?.id,
+      name,
+      image: imageBlob,
+      imageName: fileName,
+      thumbnail: makeThumbnail(pattern),
+      state: projectState,
+    });
+    requestPersistentStorage();
+    setProject({ id: saved.id, name: saved.name });
+    setSavedJson(projectJson);
+    setNotice(`Saved “${saved.name}”`);
+  };
+
+  const quickSave = () => {
+    if (project) save(project.name).catch((e) => setError((e as Error).message));
+    else setProjectsOpen(true);
+  };
+
+  const openProject = async (meta: ProjectMeta) => {
+    const blob = await loadProjectImage(meta.id);
+    if (!blob) throw new Error("This project's image is missing.");
+    const img = await loadImage(blob);
+    const st = meta.state;
+    const b = getBrand(st.brandId);
+    const byId = new Map(b.colors.map((c) => [c.id, c]));
+    setImage(img);
+    setImageBlob(blob);
+    setFileName(meta.imageName || meta.name);
+    setBrandId(b.id);
+    setWidth(st.width);
+    setBoardInput(st.boardSize);
+    setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...st.image });
+    setOutlineId(st.outlineId);
+    setOwnedOnly(st.ownedOnly);
+    setExcluded(new Set(st.excluded));
+    setSwaps(new Map(st.swaps.flatMap(([from, to]) => (byId.has(to) ? [[from, byId.get(to)!] as const] : []))));
+    setEdits({
+      w: st.edits.w,
+      h: st.edits.h,
+      map: new Map(
+        st.edits.cells.flatMap(([i, id]): [number, BeadColor | null][] => (id === null ? [[i, null]] : byId.has(id) ? [[i, byId.get(id)!]] : [])),
+      ),
+    });
+    setUndoStack([]);
+    setHighlightId(null);
+    setTool(null);
+    setPickingBg(false);
+    setError(null);
+    setProject({ id: meta.id, name: meta.name });
+    markSaved.current = true;
+    setNotice(`Opened “${meta.name}”`);
+  };
+
+  // Ctrl/⌘+S saves the open project (or opens the save dialog).
+  const quickSaveRef = useRef(quickSave);
+  quickSaveRef.current = quickSave;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        quickSaveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const edited = excluded.size > 0 || swaps.size > 0;
   const ownedEmpty = ownedOnly && ownedSet.size === 0;
 
@@ -292,7 +452,19 @@ export function App() {
           Bead Pattern Maker
         </div>
         <div className="topbar-right">
-          <span className="muted small">Your image never leaves your browser</span>
+          <span className="muted small privacy-note">Your image never leaves your browser</span>
+          {project && (
+            <span className="project-status small" title={dirty ? "Unsaved changes" : "Saved"}>
+              {project.name}
+              {dirty && <span className="unsaved-dot" aria-label="Unsaved changes" />}
+            </span>
+          )}
+          <button className="theme-btn" disabled={!image} onClick={quickSave}>
+            Save
+          </button>
+          <button className="theme-btn" onClick={() => setProjectsOpen(true)}>
+            Projects
+          </button>
           <button className="theme-btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? "Light mode" : "Dark mode"}
           </button>
@@ -320,7 +492,13 @@ export function App() {
           ) : (
             <>
               <Dropzone onFile={onFile} />
-              <button className="btn btn-ghost full" onClick={async () => (setImage(await makeSampleImage()), setFileName("sample"))}>
+              <button
+                className="btn btn-ghost full"
+                onClick={async () => {
+                  const img = await makeSampleImage();
+                  startImage(img, await imageToBlob(img), "sample");
+                }}
+              >
                 Try a sample image
               </button>
             </>
@@ -329,7 +507,7 @@ export function App() {
 
           <div className="field">
             <label htmlFor="brand">Beads</label>
-            <select id="brand" className="input" value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+            <select id="brand" className="input" value={brandId} onChange={(e) => changeBrand(e.target.value)}>
               {BRANDS.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -504,11 +682,30 @@ export function App() {
         Colours on screen are approximate — check against your actual beads. Colour data from maxcleme/beadcolors (MIT). Images are processed locally and never uploaded.
       </footer>
 
+      {notice && (
+        <div className="toast" role="status">
+          {notice}
+        </div>
+      )}
+      {projectsOpen && (
+        <ProjectsDialog
+          current={project}
+          canSave={!!imageBlob && !!pattern}
+          defaultName={fileName}
+          onSave={save}
+          onOpen={openProject}
+          onCurrentChanged={(p) => {
+            setProject(p);
+            if (!p) setSavedJson(null);
+          }}
+          onClose={() => setProjectsOpen(false)}
+        />
+      )}
       {exportOpen && pattern && (
         <ExportDialog
           pattern={pattern}
           boardSize={boardSize}
-          baseName={`${fileName}-bead-pattern`}
+          baseName={`${project?.name ?? fileName}-bead-pattern`}
           settings={exportSettings}
           onChange={setExportSettings}
           onClose={() => setExportOpen(false)}

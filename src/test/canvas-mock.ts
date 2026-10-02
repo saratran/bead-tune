@@ -118,6 +118,17 @@ export const PNG_DATA_URL = `data:image/png;base64,${PNG_BASE64}`;
 
 export function installCanvasMock(): void {
   const proto = HTMLCanvasElement.prototype as unknown as Record<string, unknown>;
+  // Like a real canvas, setting the size clears it — so recorded calls don't pile up across redraws.
+  for (const prop of ["width", "height"] as const) {
+    const desc = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, prop)!;
+    Object.defineProperty(HTMLCanvasElement.prototype, prop, {
+      ...desc,
+      set(this: HTMLCanvasElement & { __ctx?: MockContext2D }, v: number) {
+        desc.set!.call(this, v);
+        if (this.__ctx) this.__ctx.calls = [];
+      },
+    });
+  }
   proto.getContext = function (this: HTMLCanvasElement & { __ctx?: MockContext2D }) {
     return (this.__ctx ??= new MockContext2D(this));
   };
