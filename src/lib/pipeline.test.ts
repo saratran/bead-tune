@@ -130,3 +130,35 @@ describe("pixel art", () => {
     expect(pattern.width).toBe(20);
   });
 });
+
+describe("crop", () => {
+  // Left half red, right half white.
+  const halves = source(160, 80, (x) => (x < 80 ? RED : WHITE));
+
+  test("samples only the cropped area, keeping its aspect ratio", () => {
+    const { pattern } = buildPattern(halves, { ...base, crop: { x: 0.5, y: 0, w: 0.5, h: 1 } });
+    expect([pattern.width, pattern.height]).toEqual([20, 20]);
+    expect(pattern.colors).toEqual([nearestHex(WHITE)]);
+  });
+
+  test("trim works inside the crop", () => {
+    // Crop the right 3/4: red strip on the left, white background to remove and trim.
+    const { pattern } = buildPattern(halves, {
+      ...base,
+      sampling: "sharp",
+      trim: true,
+      crop: { x: 0.25, y: 0, w: 0.75, h: 1 },
+      options: withBg,
+    });
+    expect(pattern.colors).toEqual([nearestHex(RED)]);
+    expect(pattern.total).toBe(pattern.width * pattern.height);
+  });
+
+  test("pixel art uses only the cropped pixels", () => {
+    const art = (c: number, r: number) => palette[(c * 3 + r * 5) % 12]!;
+    const enlarged = source(40, 40, (x, y) => [...art(Math.floor(x / 5), Math.floor(y / 5)).rgb, 255] as Px);
+    const { pattern } = buildPattern(enlarged, { ...base, sampling: "pixelart", crop: { x: 0.5, y: 0, w: 0.5, h: 0.5 } });
+    expect([pattern.width, pattern.height]).toEqual([4, 4]);
+    expect(pattern.colors[pattern.cells[0]!]).toBe(art(4, 0));
+  });
+});

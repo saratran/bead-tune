@@ -1,5 +1,6 @@
 /** The full image → bead pattern pipeline, in order. */
 import { addOutline, contentBox, padPattern, removeStrays, trimPattern } from "./cleanup";
+import { composeCrop, cropImageData } from "./crop";
 import type { BeadColor } from "./palettes";
 import { detectBackground, generatePattern, type Pattern, type PatternOptions } from "./pattern";
 import { detectPixelGrid, FULL_CROP, pixelArtGrid, sampleGrid, type Crop, type ImageSource, type PixelGrid, type SamplingMode } from "./sampling";
@@ -7,6 +8,8 @@ import { detectPixelGrid, FULL_CROP, pixelArtGrid, sampleGrid, type Crop, type I
 export interface PipelineSettings {
   /** Target width in beads (ignored for detected pixel art, which keeps its own size). */
   width: number;
+  /** Part of the source image to use (fractions); the whole image when omitted. */
+  crop?: Crop;
   sampling: SamplingMode;
   /** Median-filter the image before sampling, to calm photo noise. */
   denoise: boolean;
@@ -31,6 +34,7 @@ export interface PipelineResult {
 export const MAX_PIXEL_ART_SIDE = 300;
 
 export function buildPattern(source: ImageSource, s: PipelineSettings): PipelineResult {
+  const userCrop = s.crop ?? FULL_CROP;
   // The outline adds one bead on each side; keep the final width as requested.
   const inner = Math.max(1, s.outline ? s.width - 2 : s.width);
   let options = s.options;
@@ -38,7 +42,7 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
 
   let pattern: Pattern | undefined;
   if (s.sampling === "pixelart") {
-    const native = source.native();
+    const native = cropImageData(source.native(), userCrop);
     const grid = detectPixelGrid(native);
     result.pixelGrid = grid;
     if (grid.scale > 1 && grid.cols <= MAX_PIXEL_ART_SIDE && grid.rows <= MAX_PIXEL_ART_SIDE) {
@@ -52,7 +56,7 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
   if (!pattern) {
     const mode = s.sampling === "smooth" ? "smooth" : "sharp";
     const sample = (crop: Crop) => sampleGrid(source, inner, crop, mode, s.denoise);
-    const first = sample(FULL_CROP);
+    const first = sample(userCrop);
     if (options.removeBackground && !options.bgColor) {
       // Pin the background colour now: after cropping, the subject may touch the border.
       options = { ...options, bgColor: detectBackground(first, options.adjustments) };
@@ -67,7 +71,8 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
       const y0 = Math.max(0, box.y - 1);
       const x1 = Math.min(pattern.width, box.x + box.w + 1);
       const y1 = Math.min(pattern.height, box.y + box.h + 1);
-      const crop = { x: x0 / pattern.width, y: y0 / pattern.height, w: (x1 - x0) / pattern.width, h: (y1 - y0) / pattern.height };
+      // The trim box is relative to the user's crop; combine them.
+      const crop = composeCrop(userCrop, { x: x0 / pattern.width, y: y0 / pattern.height, w: (x1 - x0) / pattern.width, h: (y1 - y0) / pattern.height });
       // Size the sample so the subject (not subject + margin) ends up `inner` beads wide.
       // The first estimate comes from a coarse grid, so measure again and correct once.
       const clampWidth = (n: number) => Math.max(1, Math.min(MAX_PIXEL_ART_SIDE, Math.round(n)));

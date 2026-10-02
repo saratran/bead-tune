@@ -3,6 +3,7 @@
  * Metadata and images live in separate stores so listing projects doesn't load every image.
  */
 import type { ImageSettings } from "../components/ImageOptions";
+import type { Crop } from "./sampling";
 
 const DB_NAME = "bead-pattern";
 const DB_VERSION = 1;
@@ -16,6 +17,8 @@ export interface ProjectState {
   width: number;
   boardSize: number;
   image: ImageSettings;
+  /** Part of the image used; missing in projects saved before cropping existed (= whole image). */
+  crop?: Crop;
   outlineId: string | null;
   ownedOnly: boolean;
   excluded: string[];

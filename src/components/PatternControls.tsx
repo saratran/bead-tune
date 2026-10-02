@@ -7,6 +7,8 @@ import { Toggle } from "./Toggle";
 export interface DisplaySettings {
   shape: CellShape;
   codes: boolean;
+  /** Show the original image next to the pattern. */
+  original: boolean;
 }
 
 /** Cell shape, colour codes and board lines. */
@@ -15,17 +17,20 @@ export function DisplayControls({
   onDisplay,
   showBoards,
   onShowBoards,
+  canShowOriginal = true,
 }: {
   display: DisplaySettings;
   onDisplay: (d: DisplaySettings) => void;
   showBoards: boolean;
   onShowBoards: (v: boolean) => void;
+  canShowOriginal?: boolean;
 }) {
   return (
     <>
       <ShapePicker value={display.shape} onChange={(shape) => onDisplay({ ...display, shape })} />
       <Toggle label="Codes" checked={display.codes} onChange={(codes) => onDisplay({ ...display, codes })} />
       <Toggle label="Board lines" checked={showBoards} onChange={onShowBoards} />
+      {canShowOriginal && <Toggle label="Original" checked={display.original} onChange={(original) => onDisplay({ ...display, original })} />}
     </>
   );
 }

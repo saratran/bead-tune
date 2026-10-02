@@ -1198,3 +1198,190 @@ input[type="range"] {
   margin: 0;
   padding: 14px 18px 4px;
 }
+
+/* Source image actions + crop status */
+.source-actions {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.source-actions .btn {
+  width: 100%;
+}
+
+.crop-status {
+  margin-top: -8px;
+}
+
+/* Crop editor */
+.crop-modal {
+  width: min(920px, 100%);
+  max-height: 94vh;
+}
+
+.crop-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+}
+
+.crop-size {
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+
+.crop-stage {
+  display: grid;
+  place-items: center;
+  padding: 0 18px 12px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.crop-frame {
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+  border-radius: 6px;
+  background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 16px 16px;
+}
+
+.crop-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: min(65vh, 640px);
+  pointer-events: none;
+}
+
+.crop-box {
+  position: absolute;
+  outline: 2px solid #fff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  cursor: move;
+  /* Rule-of-thirds guides */
+  background:
+    linear-gradient(to right, transparent calc(33.33% - 0.5px), rgba(255, 255, 255, 0.5) calc(33.33% - 0.5px) calc(33.33% + 0.5px), transparent 0) ,
+    linear-gradient(to right, transparent calc(66.66% - 0.5px), rgba(255, 255, 255, 0.5) calc(66.66% - 0.5px) calc(66.66% + 0.5px), transparent 0),
+    linear-gradient(to bottom, transparent calc(33.33% - 0.5px), rgba(255, 255, 255, 0.5) calc(33.33% - 0.5px) calc(33.33% + 0.5px), transparent 0),
+    linear-gradient(to bottom, transparent calc(66.66% - 0.5px), rgba(255, 255, 255, 0.5) calc(66.66% - 0.5px) calc(66.66% + 0.5px), transparent 0);
+}
+
+.crop-handle {
+  --s: 14px;
+  position: absolute;
+  width: var(--s);
+  height: var(--s);
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+}
+
+@media (pointer: coarse) {
+  .crop-handle {
+    --s: 24px;
+  }
+}
+
+.crop-handle.h-nw { left: calc(var(--s) / -2); top: calc(var(--s) / -2); cursor: nwse-resize; }
+.crop-handle.h-n { left: calc(50% - var(--s) / 2); top: calc(var(--s) / -2); cursor: ns-resize; }
+.crop-handle.h-ne { right: calc(var(--s) / -2); top: calc(var(--s) / -2); cursor: nesw-resize; }
+.crop-handle.h-e { right: calc(var(--s) / -2); top: calc(50% - var(--s) / 2); cursor: ew-resize; }
+.crop-handle.h-se { right: calc(var(--s) / -2); bottom: calc(var(--s) / -2); cursor: nwse-resize; }
+.crop-handle.h-s { left: calc(50% - var(--s) / 2); bottom: calc(var(--s) / -2); cursor: ns-resize; }
+.crop-handle.h-sw { left: calc(var(--s) / -2); bottom: calc(var(--s) / -2); cursor: nesw-resize; }
+.crop-handle.h-w { left: calc(var(--s) / -2); top: calc(50% - var(--s) / 2); cursor: ew-resize; }
+
+/* Original image next to the pattern */
+.compare.with-original {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .compare.with-original {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.original-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  background: var(--surface-2);
+}
+
+.original-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.original-bar strong {
+  margin-right: auto;
+}
+
+.original-scroll {
+  height: clamp(240px, 45vh, 560px);
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  justify-content: safe center;
+  align-items: center;
+  align-items: safe center;
+  border-radius: 8px;
+  background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 16px 16px;
+}
+
+.original-canvas {
+  display: block;
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.original-canvas:active {
+  cursor: grabbing;
+}
+
+/* Fullscreen: pattern alone, or original + pattern side by side (stacked in portrait). */
+.fs-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+}
+
+.fs-body > .pattern-view {
+  flex: 1;
+  min-width: 0;
+}
+
+.fs-body.with-original > .original-view {
+  flex: 1;
+  min-width: 0;
+}
+
+.fs-body .original-scroll {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+@media (max-aspect-ratio: 1/1) {
+  .fs-body.with-original {
+    flex-direction: column;
+  }
+}

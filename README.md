@@ -24,6 +24,9 @@ git pull && docker compose up -d --build   # update
 ## Features
 
 - Drop, pick or paste an image (or try the built-in sample)
+- Crop the image (free or square, change it any time); the crop is saved with projects
+- Show the original image beside the pattern (cropped area or whole image), with its own zoom —
+  also in fullscreen
 - Colour presets: MARD 221 (A–M, default), MARD 291, Perler — works for any bead size
 - Width in beads (presets 52 / 78 / 104) and adjustable pegboard size
 - Sampling: Smooth (photos), Sharp (crisp edges for drawings/logos) or Pixel art (detects the

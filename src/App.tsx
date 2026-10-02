@@ -5,12 +5,15 @@ import { Dropzone } from "./components/Dropzone";
 import { DEFAULT_IMAGE_SETTINGS, ImageOptions, type ImageSettings } from "./components/ImageOptions";
 import { PatternView, type EditTool } from "./components/PatternView";
 import { ProjectsDialog } from "./components/ProjectsDialog";
+import { CropDialog } from "./components/CropDialog";
+import { OriginalView } from "./components/OriginalView";
+import { cropPixels, isFullCrop } from "./lib/crop";
 import { applyEdits, type Edits } from "./lib/cleanup";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
 import { applySwaps, type Pattern } from "./lib/pattern";
 import { buildPattern } from "./lib/pipeline";
 import { loadProjectImage, requestPersistentStorage, saveProject, type ProjectMeta, type ProjectState } from "./lib/projects";
-import { canvasSource } from "./lib/sampling";
+import { canvasSource, FULL_CROP, type Crop } from "./lib/sampling";
 import { ExportDialog } from "./components/ExportDialog";
 import { DisplayControls, EditBar, type DisplaySettings } from "./components/PatternControls";
 import { Toggle } from "./components/Toggle";
@@ -24,7 +27,7 @@ const THEME_KEY = "bead-pattern:theme";
 const DISPLAY_KEY = "bead-pattern:display";
 const EXPORT_KEY = "bead-pattern:export";
 
-const DEFAULT_DISPLAY: DisplaySettings = { shape: "square", codes: false };
+const DEFAULT_DISPLAY: DisplaySettings = { shape: "square", codes: false, original: false };
 
 /** Stored settings merged over defaults, so new fields get sensible values. */
 function loadStored<T extends object>(key: string, defaults: T): T {
@@ -81,7 +84,7 @@ function loadImage(file: Blob): Promise<HTMLImageElement> {
   });
 }
 
-type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | null;
+type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | { kind: "crop" } | null;
 
 const MAX_UNDO = 50;
 const THUMB_SIZE = 160;
@@ -139,6 +142,7 @@ export function App() {
   const [boardInput, setBoardInput] = useState(26);
   const [imageSettings, setImageSettings] = useState<ImageSettings>(DEFAULT_IMAGE_SETTINGS);
   const [outlineId, setOutlineId] = useState<string | null>(null);
+  const [crop, setCrop] = useState<Crop>(FULL_CROP);
   const [pickingBg, setPickingBg] = useState(false);
   const [ownedOnly, setOwnedOnly] = useState(false);
   const [owned, setOwned] = useState(loadOwned);
@@ -198,6 +202,7 @@ export function App() {
       setProject(null);
       setSavedJson(null);
       setPickingBg(false);
+      setCrop(FULL_CROP);
       resetEdits();
       clearHandEdits();
     },
@@ -240,6 +245,7 @@ export function App() {
     const { sampling, denoise, trim, cleanup, outline, ...options } = dSettings;
     return buildPattern(source, {
       width: Math.max(2, Math.min(300, dWidth || 1)),
+      crop,
       sampling,
       denoise,
       trim,
@@ -247,7 +253,7 @@ export function App() {
       outline: outline ? outlineColor : null,
       options: { ...options, palette },
     });
-  }, [source, dWidth, dSettings, palette, outlineColor]);
+  }, [source, dWidth, dSettings, palette, outlineColor, crop]);
 
   const swapped = useMemo(() => (result ? applySwaps(result.pattern, swaps) : null), [result, swaps]);
 
@@ -343,13 +349,14 @@ export function App() {
       width,
       boardSize,
       image: imageSettings,
+      crop,
       outlineId,
       ownedOnly,
       excluded: [...excluded],
       swaps: [...swaps].map(([from, to]) => [from, to.id]),
       edits: { w: edits.w, h: edits.h, cells: [...edits.map].map(([i, c]) => [i, c?.id ?? null]) },
     }),
-    [brandId, width, boardSize, imageSettings, outlineId, ownedOnly, excluded, swaps, edits],
+    [brandId, width, boardSize, imageSettings, crop, outlineId, ownedOnly, excluded, swaps, edits],
   );
   const projectJson = useMemo(() => JSON.stringify(projectState), [projectState]);
   const dirty = !!project && projectJson !== savedJson;
@@ -442,6 +449,7 @@ export function App() {
     setWidth(st.width);
     setBoardInput(st.boardSize);
     setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...st.image });
+    setCrop(st.crop ?? FULL_CROP);
     setOutlineId(st.outlineId);
     setOwnedOnly(st.ownedOnly);
     setExcluded(new Set(st.excluded));
@@ -530,6 +538,8 @@ export function App() {
   }, []);
 
   undoRef.current = undo;
+  const showOriginal = display.original && !!image;
+  const cropPx = image && !isFullCrop(crop) ? cropPixels(crop, image.naturalWidth || image.width, image.naturalHeight || image.height) : null;
   const brushOrDefault = brush ?? pattern?.colors[0] ?? null;
   const editBar = tool && (
     <EditBar
@@ -584,6 +594,7 @@ export function App() {
       <main className="layout">
         <aside className="card controls">
           {image ? (
+            <>
             <div className="source">
               <img
                 src={image.src}
@@ -592,8 +603,22 @@ export function App() {
                 title={pickingBg ? "Click the background colour" : undefined}
                 onClick={pickBackground}
               />
-              <Dropzone onFile={onFile} compact />
+              <div className="source-actions">
+                <Dropzone onFile={onFile} compact />
+                <button className="btn btn-ghost" onClick={() => setModal({ kind: "crop" })}>
+                  ✂ Crop
+                </button>
+              </div>
             </div>
+            {cropPx && (
+              <p className="hint crop-status">
+                Cropped to {cropPx.w} × {cropPx.h} px ·{" "}
+                <button className="link-btn" onClick={() => setCrop(FULL_CROP)}>
+                  Remove crop
+                </button>
+              </p>
+            )}
+            </>
           ) : (
             <>
               <Dropzone onFile={onFile} />
@@ -692,7 +717,7 @@ export function App() {
             <div className="card-head">
               <h2>Pattern</h2>
               <div className="actions">
-                <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} />
+                <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} canShowOriginal={!!image} />
                 <button className="btn btn-ghost" disabled={!pattern?.total} onClick={enterFullscreen} title="View and edit fullscreen">
                   ⤢ Fullscreen
                 </button>
@@ -711,18 +736,23 @@ export function App() {
             </div>
             {tool && pattern && !fullscreen && editBar}
             {pattern && pattern.total > 0 ? (
-              <PatternView
-                pattern={pattern}
-                boardSize={boardSize}
-                showBoards={showBoards}
-                highlightId={highlightId}
-                theme={theme}
-                shape={display.shape}
-                codes={display.codes}
-                tool={tool}
-                onEdit={onEdit}
-                onPickColor={setHighlightId}
-              />
+              <div className={`compare ${showOriginal ? "with-original" : ""}`}>
+                {showOriginal && !fullscreen && image && (
+                  <OriginalView image={image} crop={crop} onHide={() => setDisplay({ ...display, original: false })} />
+                )}
+                <PatternView
+                  pattern={pattern}
+                  boardSize={boardSize}
+                  showBoards={showBoards}
+                  highlightId={highlightId}
+                  theme={theme}
+                  shape={display.shape}
+                  codes={display.codes}
+                  tool={tool}
+                  onEdit={onEdit}
+                  onPickColor={setHighlightId}
+                />
+              </div>
             ) : (
               <div className="empty">
                 {ownedEmpty
@@ -778,7 +808,7 @@ export function App() {
               </span>
             </div>
             <div className="actions">
-              <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} />
+              <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} canShowOriginal={!!image} />
               <div className="zoom" role="group" aria-label="Zoom">
                 <button className="btn btn-ghost" onClick={() => zoomBy(1 / 1.25)} disabled={zoom <= 1} aria-label="Zoom out">
                   −
@@ -806,21 +836,24 @@ export function App() {
             </div>
           </div>
           {editBar}
-          <PatternView
-            pattern={pattern}
-            boardSize={boardSize}
-            showBoards={showBoards}
-            highlightId={highlightId}
-            theme={theme}
-            shape={display.shape}
-            codes={display.codes}
-            tool={tool}
-            onEdit={onEdit}
-            onPickColor={setHighlightId}
-            fullscreen
-            zoom={zoom}
-            onZoom={zoomBy}
-          />
+          <div className={`fs-body ${showOriginal ? "with-original" : ""}`}>
+            {showOriginal && image && <OriginalView image={image} crop={crop} onHide={() => setDisplay({ ...display, original: false })} />}
+            <PatternView
+              pattern={pattern}
+              boardSize={boardSize}
+              showBoards={showBoards}
+              highlightId={highlightId}
+              theme={theme}
+              shape={display.shape}
+              codes={display.codes}
+              tool={tool}
+              onEdit={onEdit}
+              onPickColor={setHighlightId}
+              fullscreen
+              zoom={zoom}
+              onZoom={zoomBy}
+            />
+          </div>
         </div>
       )}
       {notice && (
@@ -889,6 +922,17 @@ export function App() {
             const next = { ...owned, [brand.source]: [...s] };
             setOwned(next);
             saveOwned(next);
+          }}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === "crop" && image && (
+        <CropDialog
+          image={image}
+          crop={crop}
+          onApply={(c) => {
+            setCrop(c);
+            setModal(null);
           }}
           onClose={() => setModal(null)}
         />
