@@ -1,4 +1,3 @@
-import { symbolFor } from "../lib/symbols";
 import type { Pattern } from "../lib/pattern";
 import type { BeadColor } from "../lib/palettes";
 
@@ -31,9 +30,7 @@ export function BeadList({ pattern, highlightId, onHighlight, onSwap, onRemove, 
             {pattern.colors.map((c, i) => (
               <li key={c.id} className={highlightId === c.id ? "active" : ""}>
                 <button className="bead-row" onClick={() => onHighlight(highlightId === c.id ? null : c.id)}>
-                  <span className="swatch" style={{ background: c.hex }}>
-                    {symbolFor(i)}
-                  </span>
+                  <span className="swatch" style={{ background: c.hex }} />
                   <span className="bead-name">
                     <b>{c.code}</b>{c.name && ` ${c.name}`}
                   </span>

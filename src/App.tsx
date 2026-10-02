@@ -5,12 +5,40 @@ import { Dropzone } from "./components/Dropzone";
 import { PatternView } from "./components/PatternView";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
 import { applySwaps, DEFAULT_ADJUSTMENTS, generatePattern, sampleImage, type Adjustments } from "./lib/pattern";
-import { exportPng } from "./lib/render";
+import { ExportDialog } from "./components/ExportDialog";
+import { ShapePicker } from "./components/ShapePicker";
+import { Toggle } from "./components/Toggle";
+import { DEFAULT_EXPORT, type ExportSettings } from "./lib/export";
+import type { CellShape } from "./lib/render";
 import { makeSampleImage } from "./lib/sample";
 
 const WIDTH_PRESETS = [52, 78, 104];
 const OWNED_KEY = "bead-pattern:owned";
 const THEME_KEY = "bead-pattern:theme";
+const DISPLAY_KEY = "bead-pattern:display";
+const EXPORT_KEY = "bead-pattern:export";
+
+interface DisplaySettings {
+  shape: CellShape;
+  codes: boolean;
+}
+
+const DEFAULT_DISPLAY: DisplaySettings = { shape: "square", codes: false };
+
+/** Stored settings merged over defaults, so new fields get sensible values. */
+function loadStored<T extends object>(key: string, defaults: T): T {
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem(key) ?? "{}") };
+  } catch {
+    return defaults;
+  }
+}
+
+function store(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
 
 type Theme = "dark" | "light";
 
@@ -62,8 +90,19 @@ export function App() {
   const [ownedOnly, setOwnedOnly] = useState(false);
   const [owned, setOwned] = useState(loadOwned);
   const [adjust, setAdjust] = useState<Adjustments>(DEFAULT_ADJUSTMENTS);
-  const [showBoards, setShowBoards] = useState(true);
+  const [showBoards, setShowBoards] = useState(false);
   const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [display, setDisplayState] = useState(() => loadStored(DISPLAY_KEY, DEFAULT_DISPLAY));
+  const [exportSettings, setExportState] = useState(() => loadStored(EXPORT_KEY, DEFAULT_EXPORT));
+  const [exportOpen, setExportOpen] = useState(false);
+  const setDisplay = (d: DisplaySettings) => {
+    setDisplayState(d);
+    store(DISPLAY_KEY, d);
+  };
+  const setExportSettings = (s: ExportSettings) => {
+    setExportState(s);
+    store(EXPORT_KEY, s);
+  };
 
   // Layout effect so the theme is applied before children draw the canvas.
   useLayoutEffect(() => {
@@ -284,24 +323,11 @@ export function App() {
             <div className="card-head">
               <h2>Pattern</h2>
               <div className="actions">
+                <ShapePicker value={display.shape} onChange={(shape) => setDisplay({ ...display, shape })} />
+                <Toggle label="Codes" checked={display.codes} onChange={(codes) => setDisplay({ ...display, codes })} />
                 <Toggle label="Board lines" checked={showBoards} onChange={setShowBoards} />
-                <button
-                  className="btn btn-ghost"
-                  disabled={!pattern?.total}
-                  onClick={() => pattern && exportPng(pattern, boardSize, showBoards, `${fileName}-beads.png`)}
-                >
-                  PNG
-                </button>
-                <button
-                  className="btn btn-primary"
-                  disabled={!pattern?.total}
-                  onClick={async () => {
-                    if (!pattern) return;
-                    const { exportPdf } = await import("./lib/pdf");
-                    exportPdf(pattern, brand.name, boardSize, `${fileName}-bead-pattern.pdf`);
-                  }}
-                >
-                  Download PDF
+                <button className="btn btn-primary" disabled={!pattern?.total} onClick={() => setExportOpen(true)}>
+                  Export
                 </button>
               </div>
             </div>
@@ -312,6 +338,8 @@ export function App() {
                 showBoards={showBoards}
                 highlightId={highlightId}
                 theme={theme}
+                shape={display.shape}
+                codes={display.codes}
                 onPickColor={setHighlightId}
               />
             ) : (
@@ -352,6 +380,16 @@ export function App() {
         Colours on screen are approximate — check against your actual beads. Colour data from maxcleme/beadcolors (MIT). Images are processed locally and never uploaded.
       </footer>
 
+      {exportOpen && pattern && (
+        <ExportDialog
+          pattern={pattern}
+          boardSize={boardSize}
+          baseName={`${fileName}-bead-pattern`}
+          settings={exportSettings}
+          onChange={setExportSettings}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
       {modal?.kind === "owned" && (
         <ColorPicker
           mode="multi"
@@ -377,16 +415,6 @@ export function App() {
         />
       )}
     </div>
-  );
-}
-
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="toggle">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span className="track" aria-hidden />
-      <span>{label}</span>
-    </label>
   );
 }
 

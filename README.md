@@ -20,7 +20,10 @@ bun run build    # static site in dist/
 - Colour limit, dithering, background removal, "only colours I have"
 - Brightness / contrast / saturation
 - Bead shopping list; click a bead or colour to highlight, swap or remove colours
-- Export PNG, or a PDF with a cover page + one symbol grid page per pegboard
+- Display as squares (default), beads, crosses or dots, with optional colour codes
+- Export dialog with live preview: PNG or PDF, size L/M/S, cell shape, grid, analysis
+  diagram (coordinates + guide lines every 5/10), count summary, title, watermark, shadow,
+  colour codes, and (PDF) one page per pegboard
 
 ## How it works
 

@@ -710,3 +710,96 @@ input[type="range"] {
   text-align: center;
   margin-top: 32px;
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.segmented.icons button {
+  display: grid;
+  place-items: center;
+  padding: 6px 9px;
+  color: var(--muted);
+}
+
+.segmented.icons button.on {
+  color: var(--bg);
+}
+
+/* Export dialog */
+.export-modal {
+  width: min(980px, 100%);
+  max-height: min(92vh, 900px);
+}
+
+.export-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 1fr);
+  gap: 18px;
+  padding: 16px 18px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+@media (max-width: 760px) {
+  .export-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.export-preview {
+  background: var(--surface-2);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  place-items: center;
+  align-self: start;
+  min-height: 200px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.export-preview-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.export-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.setting-group {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 6px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.setting-group > .input {
+  margin: 2px 0 8px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+
+.setting-row .hint {
+  font-weight: 400;
+}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Pattern } from "../lib/pattern";
 import { colorLabel } from "../lib/palettes";
-import { drawPattern } from "../lib/render";
+import { drawPattern, type CellShape } from "../lib/render";
 
 interface Props {
   pattern: Pattern;
@@ -10,11 +10,13 @@ interface Props {
   highlightId: string | null;
   onPickColor: (id: string | null) => void;
   theme: string;
+  shape: CellShape;
+  codes: boolean;
 }
 
 const MAX_CELL = 26;
 
-export function PatternView({ pattern, boardSize, showBoards, highlightId, onPickColor, theme }: Props) {
+export function PatternView({ pattern, boardSize, showBoards, highlightId, onPickColor, theme, shape, codes }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [wrapWidth, setWrapWidth] = useState(600);
@@ -44,6 +46,8 @@ export function PatternView({ pattern, boardSize, showBoards, highlightId, onPic
     const token = (name: string) => css.getPropertyValue(name).trim() || undefined;
     drawPattern(ctx, pattern, {
       cell,
+      shape,
+      codes,
       boardSize,
       showBoards,
       highlightId,
@@ -51,7 +55,7 @@ export function PatternView({ pattern, boardSize, showBoards, highlightId, onPic
       pegColor: token("--peg"),
       boardLineColor: token("--board-line"),
     });
-  }, [pattern, cell, boardSize, showBoards, highlightId, theme]);
+  }, [pattern, cell, shape, codes, boardSize, showBoards, highlightId, theme]);
 
   const cellAt = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
