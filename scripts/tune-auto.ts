@@ -9,7 +9,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import { DEFAULT_SEARCH_SPACE, enumerateCandidates, rate, scan, SEARCH_OPTIONS, suggest, type SearchSpace } from "../src/lib/auto";
+import { DEFAULT_SEARCH_SPACE, enumerateCandidates, likenessToleranceFor, makeEvaluator, objectiveFor, rate, refine, scan, SEARCH_OPTIONS, suggest, type Candidate, type SearchSpace } from "../src/lib/auto";
 import { BRANDS, DEFAULT_BRAND_ID } from "../src/lib/palettes";
 import { DEFAULT_PATTERN_OPTIONS, type Pattern } from "../src/lib/pattern";
 import type { PipelineSettings } from "../src/lib/pipeline";
@@ -75,6 +75,41 @@ const ms = performance.now() - t0;
 console.log(`${results.length} candidates in ${(ms / 1000).toFixed(1)}s (${(ms / results.length).toFixed(1)} ms each)`);
 const suggestions = suggest(rate(results), Number(flag("count", "8")));
 
+// ---- refinement comparison: same budget, each method, per suggestion
+if (args.includes("--compare-refine")) {
+  const budget = Number(flag("budget", "40"));
+  const evaluate = makeEvaluator(source, base);
+  const describe = (from: Candidate, to: Candidate) =>
+    (["maxColors", "brightness", "contrast", "saturation"] as const)
+      .filter((k) => from[k] !== to[k])
+      .map((k) => `${k} ${from[k]}→${to[k]}`)
+      .concat(from.dither.strength !== to.dither.strength ? [`dither ${from.dither.strength}→${to.dither.strength}`] : [])
+      .join(", ") || "no change";
+  console.log(`\nrefinement, budget ${budget} per suggestion (cost: lower is better)`);
+  var refinedPatterns: Pattern[] = [];
+  console.log("label            start   pattern(Δ%)            anneal(Δ%)");
+  const totals = { pattern: 0, anneal: 0, start: 0, tPattern: 0, tAnneal: 0 };
+  for (const sg of suggestions) {
+    const objective = objectiveFor(sg.label);
+    const startCost = objective(sg.metrics);
+    const t0 = performance.now();
+    const tol = likenessToleranceFor(sg.label);
+    const p = await refine(evaluate, sg, objective, { method: "pattern", budget, likenessTolerance: tol });
+    refinedPatterns.push(p.best.pattern);
+    const t1 = performance.now();
+    const a = await refine(evaluate, sg, objective, { method: "anneal", budget, seed: 7, likenessTolerance: tol });
+    const t2 = performance.now();
+    const pc = objective(p.best.metrics), ac = objective(a.best.metrics);
+    totals.start += startCost; totals.pattern += pc; totals.anneal += ac; totals.tPattern += t1 - t0; totals.tAnneal += t2 - t1;
+    const pct = (c: number) => `${(((c - startCost) / startCost) * 100).toFixed(1)}%`.padStart(7);
+    console.log(`${sg.label.padEnd(15)} ${startCost.toFixed(4)}  ${pc.toFixed(4)} (${pct(pc)})  ${ac.toFixed(4)} (${pct(ac)})`);
+    console.log(`                  pattern: ${describe(sg.candidate, p.best.candidate)}`);
+    console.log(`                  anneal:  ${describe(sg.candidate, a.best.candidate)}`);
+  }
+  console.log(`TOTAL           ${totals.start.toFixed(4)}  ${totals.pattern.toFixed(4)}            ${totals.anneal.toFixed(4)}`);
+  console.log(`time: pattern ${(totals.tPattern / 1000).toFixed(1)}s, anneal ${(totals.tAnneal / 1000).toFixed(1)}s (shared cache, so the second run is partly cached)`);
+}
+
 const fmt = (n: number, d = 1) => n.toFixed(d).padStart(6);
 console.log("\n#  label            like ease  colΔE detΔE  distΔE edgeErr  noise cols strays frag  settings");
 suggestions.forEach((s, i) => {
@@ -90,8 +125,8 @@ const CELL = Number(flag("cell", "6")), GAP = 12, PER_ROW = Number(flag("cols", 
 const reference = sampleGrid(source, width, FULL_CROP, "smooth", false);
 const tiles: { w: number; h: number; px: (x: number, y: number) => [number, number, number] }[] = [
   { w: reference.width, h: reference.height, px: (x, y) => [reference.data[(y * reference.width + x) * 4]!, reference.data[(y * reference.width + x) * 4 + 1]!, reference.data[(y * reference.width + x) * 4 + 2]!] },
-  ...suggestions.map((s) => {
-    const p: Pattern = s.pattern;
+  ...suggestions.map((s, i) => {
+    const p: Pattern = (typeof refinedPatterns !== "undefined" && refinedPatterns[i]) || s.pattern;
     return { w: p.width, h: p.height, px: (x: number, y: number): [number, number, number] => {
       const idx = p.cells[y * p.width + x]!;
       return idx < 0 ? [255, 255, 255] : p.colors[idx]!.rgb;

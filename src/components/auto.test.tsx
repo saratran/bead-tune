@@ -2,13 +2,13 @@ import { describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
 import { DEFAULT_SEARCH_SPACE } from "../lib/auto";
-import { allPresets, BUILT_IN_PRESETS, deletePreset, loadLastConfig, savePreset } from "../lib/autoPresets";
+import { allPresets, BUILT_IN_PRESETS, DEFAULT_REFINE, deletePreset, loadLastConfig, savePreset } from "../lib/autoPresets";
 import { DEFAULT_PATTERN_OPTIONS } from "../lib/pattern";
 import type { PipelineSettings } from "../lib/pipeline";
 import { FULL_CROP, imageDataSource, makeImageData } from "../lib/sampling";
 import { mockPixels } from "../test/canvas-mock";
 import { mard } from "../test/fixtures";
-import { AutoDialog, describeCandidate } from "./AutoDialog";
+import { AutoDialog, describeCandidate, describeChanges } from "./AutoDialog";
 
 // Red disc on a blue gradient.
 const img = makeImageData(48, 48);
@@ -26,8 +26,9 @@ function renderDialog(props: Partial<Parameters<typeof AutoDialog>[0]> = {}) {
   const onResults = mock();
   const onApply = mock();
   const onClose = mock();
-  const utils = render(<AutoDialog source={source} base={base} results={null} onResults={onResults} onApply={onApply} onClose={onClose} {...props} />);
-  return { ...utils, onResults, onApply, onClose };
+  const onBookmarksChange = mock();
+  const utils = render(<AutoDialog source={source} base={base} results={null} onResults={onResults} onApply={onApply} bookmarks={[]} onBookmarksChange={onBookmarksChange} onClose={onClose} {...props} />);
+  return { ...utils, onResults, onApply, onClose, onBookmarksChange };
 }
 
 describe("presets storage", () => {
@@ -37,8 +38,8 @@ describe("presets storage", () => {
   });
 
   test("save, replace by name, delete", () => {
-    const a = savePreset("Mine", { space: DEFAULT_SEARCH_SPACE, count: 5, limit: 100 });
-    savePreset("Mine", { space: { ...DEFAULT_SEARCH_SPACE, maxColors: [8] }, count: 4, limit: 100 });
+    const a = savePreset("Mine", { space: DEFAULT_SEARCH_SPACE, count: 5, limit: 100, refine: DEFAULT_REFINE });
+    savePreset("Mine", { space: { ...DEFAULT_SEARCH_SPACE, maxColors: [8] }, count: 4, limit: 100, refine: DEFAULT_REFINE });
     const mine = allPresets().filter((p) => !p.builtIn);
     expect(mine).toHaveLength(1);
     expect(mine[0]!.space.maxColors).toEqual([8]);
@@ -91,7 +92,7 @@ describe("AutoDialog", () => {
     expect(list.length).toBeGreaterThan(0);
     expect(list[0].label).toBe("Most faithful");
 
-    rerender(<AutoDialog source={source} base={base} results={list} onResults={onResults} onApply={onApply} onClose={onClose} />);
+    rerender(<AutoDialog source={source} base={base} results={list} onResults={onResults} onApply={onApply} bookmarks={[]} onBookmarksChange={mock()} onClose={onClose} />);
     expect(screen.getByText("Search again")).toBeTruthy();
     const cards = screen.getAllByRole("listitem");
     expect(within(cards[0]!).getByText("Most faithful")).toBeTruthy();
@@ -159,4 +160,111 @@ describe("Auto in the app", () => {
     fireEvent.click(screen.getByText("✨ Auto suggestions"));
     expect(screen.getAllByText("Use this").length).toBeGreaterThan(0);
   }, 20000);
+});
+
+describe("fine-tuning and bookmarks", () => {
+  test("fine-tuning settings are part of the remembered configuration", () => {
+    const { unmount } = renderDialog();
+    expect((screen.getByLabelText("Fine-tune suggestions") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "Simulated annealing" }));
+    fireEvent.change(screen.getByLabelText("Fine-tuning effort"), { target: { value: "80" } });
+    unmount();
+    renderDialog();
+    expect(screen.getByRole("radio", { name: "Simulated annealing" }).getAttribute("aria-checked")).toBe("true");
+    expect((screen.getByLabelText("Fine-tuning effort") as HTMLSelectElement).value).toBe("80");
+    fireEvent.click(screen.getByLabelText("Fine-tune suggestions"));
+    expect(screen.queryByLabelText("Fine-tuning effort") === null).toBe(true);
+  });
+
+  test("describeChanges lists what fine-tuning moved", () => {
+    const from = { sampling: "smooth" as const, denoise: false, maxColors: 24, dither: { mode: "diffusion" as const, strength: 60 }, cleanup: 0, metric: "standard" as const, minBeads: 0, brightness: 0, contrast: 0, saturation: 0 };
+    expect(describeChanges(from, { ...from, maxColors: 31, brightness: 6, dither: { mode: "diffusion", strength: 45 } })).toBe("31 colours (was 24) · brightness +6 (was 0) · dither 45% (was 60%)");
+  });
+
+  test("star a suggestion, then use or remove it from Bookmarks", async () => {
+    const { onResults, onApply, rerender, onClose } = renderDialog();
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "builtin:quick" } });
+    fireEvent.click(screen.getByText("Find suggestions"));
+    await waitFor(() => expect(onResults).toHaveBeenCalled(), { timeout: 8000 });
+    const list = onResults.mock.lastCall![0];
+    let bookmarks: import("../lib/bookmarks").Bookmark[] = [];
+    const onBookmarksChange = mock((b) => {
+      bookmarks = b;
+      rerender(<AutoDialog source={source} base={base} results={list} onResults={onResults} onApply={onApply} bookmarks={bookmarks} onBookmarksChange={onBookmarksChange} onClose={onClose} />);
+    });
+    rerender(<AutoDialog source={source} base={base} results={list} onResults={onResults} onApply={onApply} bookmarks={bookmarks} onBookmarksChange={onBookmarksChange} onClose={onClose} />);
+
+    const star = screen.getByLabelText(`Bookmark ${list[0].label}`);
+    expect(star.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(star);
+    expect(bookmarks).toHaveLength(1);
+    expect(bookmarks[0]).toMatchObject({ label: list[0].label, candidate: list[0].candidate, context: { width: 12 } });
+    expect(bookmarks[0]!.thumbnail).toStartWith("data:image/png");
+    expect(screen.getByLabelText(`Remove bookmark: ${list[0].label}`).getAttribute("aria-pressed")).toBe("true");
+
+    const section = screen.getByRole("region", { name: "Bookmarks" });
+    expect(within(section).getByText("★ Bookmarks (1)")).toBeTruthy();
+    fireEvent.click(within(section).getByText("Use this"));
+    expect(onApply).toHaveBeenLastCalledWith(bookmarks[0]);
+    fireEvent.click(within(section).getByText("Remove"));
+    expect(bookmarks).toEqual([]);
+    expect(screen.queryByRole("region", { name: "Bookmarks" }) === null).toBe(true);
+  }, 20000);
+
+  test("bookmarks show without running a scan", () => {
+    renderDialog({ bookmarks: [{ id: "b1", label: "Balanced", candidate: { sampling: "smooth", denoise: false, maxColors: 24, dither: { mode: "none", strength: 0 }, cleanup: 0, metric: "standard", minBeads: 0, brightness: 0, contrast: 0, saturation: 0 }, thumbnail: "data:image/png;base64,AA==", likeness: 80, ease: 60, colors: 24, beads: 144, strays: 2, createdAt: 1, context: { width: 52, brandId: "mard" } }] });
+    const section = screen.getByRole("region", { name: "Bookmarks" });
+    expect(within(section).getByText("Balanced")).toBeTruthy();
+    expect(within(section).getByText("Made at 52 beads wide")).toBeTruthy(); // current width is 12
+  });
+});
+
+describe("bookmarks in the app", () => {
+  const halves = (w: number, h: number) => {
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d.set(x < w / 2 ? [210, 40, 50, 255] : [40, 90, 200, 255], (y * w + x) * 4);
+    return d;
+  };
+
+  async function loadAndScan() {
+    mockPixels(halves);
+    const utils = render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(utils.container.querySelector(".pattern-canvas")).toBeTruthy());
+    fireEvent.click(screen.getByText("✨ Auto suggestions"));
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "builtin:quick" } });
+    return utils;
+  }
+
+  test("survive new scans and reloads, and travel with saved projects", async () => {
+    const { unmount } = await loadAndScan();
+    fireEvent.click(screen.getByText("Find suggestions"));
+    const first = (await screen.findAllByLabelText(/^Bookmark /, undefined, { timeout: 10000 }))[0]!;
+    const label = first.getAttribute("aria-label")!.replace("Bookmark ", "");
+    fireEvent.click(first);
+    expect(screen.getByRole("region", { name: "Bookmarks" })).toBeTruthy();
+
+    // A new scan replaces the suggestions but keeps the bookmark.
+    fireEvent.click(screen.getByText("Search again"));
+    await waitFor(() => expect(screen.getByText("Search again")).toBeTruthy(), { timeout: 10000 });
+    expect(within(screen.getByRole("region", { name: "Bookmarks" })).getByText(label)).toBeTruthy();
+
+    // Reload: same image → same bookmarks.
+    unmount();
+    await loadAndScan();
+    expect(within(screen.getByRole("region", { name: "Bookmarks" })).getByText(label)).toBeTruthy();
+
+    // Save as a project, forget the browser's bookmarks, reopen the project.
+    fireEvent.click(screen.getByLabelText("Close"));
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    const d = screen.getByRole("dialog", { name: "Projects" });
+    fireEvent.change(within(d).getByLabelText("Save this pattern"), { target: { value: "With bookmark" } });
+    fireEvent.click(within(d).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(within(d).getByText("With bookmark")).toBeTruthy());
+    localStorage.removeItem("bead-pattern:bookmarks");
+    fireEvent.click(await within(d).findByRole("button", { name: "Open" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Projects" }) === null).toBe(true));
+    fireEvent.click(screen.getByText("✨ Auto suggestions"));
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "Bookmarks" })).getByText(label)).toBeTruthy());
+  }, 40000);
 });

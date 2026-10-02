@@ -199,6 +199,24 @@ export function drawPattern(ctx: CanvasRenderingContext2D, p: Pattern, o: Displa
   }
 }
 
+/** Small square-cell picture of a pattern as a PNG data URL (for lists and bookmarks). */
+export function patternThumbnail(p: Pattern, size = 160): string {
+  const cell = Math.max(1, Math.floor(size / Math.max(p.width, p.height)));
+  const canvas = document.createElement("canvas");
+  canvas.width = p.width * cell;
+  canvas.height = p.height * cell;
+  drawPattern(canvas.getContext("2d")!, p, {
+    cell,
+    shape: "square",
+    codes: false,
+    boardSize: p.width,
+    showBoards: false,
+    background: "#ffffff",
+    gridColor: "rgba(0, 0, 0, 0)",
+  });
+  return canvas.toDataURL("image/png");
+}
+
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

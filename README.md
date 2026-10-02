@@ -41,7 +41,11 @@ git pull && docker compose up -d --build   # update
   clean-up, matching and brightness/contrast/saturation; scores likeness to the original
   (colour, fine detail, viewing distance, edges, speckle) and ease (fewer colours, fewer stray
   beads); shows a varied list (most faithful, balanced, simplest, smooth shading, crisp…).
-  Configurable search space with built-in and saved presets
+  Configurable search space with built-in and saved presets. After the grid search each
+  suggestion is fine-tuned on its continuous settings (brightness, contrast, saturation, exact
+  colour count, dither strength) by pattern search (default) or simulated annealing, within a
+  likeness guard rail. Bookmark (★) suggestions: kept per image across runs and reloads, and
+  saved inside projects
 - Fullscreen viewer/editor: fit-to-screen, zoom (buttons, +/−/0, Ctrl/⌘+wheel, pinch), drag to
   pan, all display and edit tools, Esc to exit, Ctrl/⌘+Z to undo
 - Works on phones: fits narrow screens, touch-sized controls, drag-to-paint on touch

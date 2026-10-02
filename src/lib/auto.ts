@@ -499,8 +499,42 @@ function yieldToBrowser(): Promise<void> {
 }
 
 export interface ScanProgress {
+  /** "search" = trying the grid of combinations; "refine" = fine-tuning suggestions. */
+  phase?: "search" | "refine";
   done: number;
   total: number;
+}
+
+export interface Evaluated {
+  candidate: Candidate;
+  pattern: Pattern;
+  metrics: Metrics;
+}
+
+/**
+ * Builds and scores candidates, caching results (refinement revisits points)
+ * and the reference images they're compared against.
+ */
+export function makeEvaluator(source: ImageSource, base: PipelineSettings) {
+  const references = new Map<string, ImageData>();
+  const cache = new Map<string, Evaluated | null>();
+  return (c: Candidate): Evaluated | null => {
+    const key = JSON.stringify(c);
+    if (cache.has(key)) return cache.get(key)!;
+    const { pattern, sampled } = buildPattern(source, candidateSettings(base, c));
+    let result: Evaluated | null = null;
+    if (pattern.total > 0 && sampled) {
+      const refKey = `${sampled.width}@${sampled.crop.x},${sampled.crop.y},${sampled.crop.w},${sampled.crop.h}`;
+      let reference = references.get(refKey);
+      if (!reference) {
+        reference = sampleGrid(source, sampled.width, sampled.crop, "smooth", false);
+        references.set(refKey, reference);
+      }
+      result = { candidate: c, pattern, metrics: scorePattern(pattern, reference, sampled.offsetX, sampled.offsetY) };
+    }
+    cache.set(key, result);
+    return result;
+  };
 }
 
 /**
@@ -514,29 +548,279 @@ export async function scan(
   onProgress?: (p: ScanProgress) => void,
   signal?: AbortSignal,
   sliceMs = 24,
-): Promise<{ candidate: Candidate; pattern: Pattern; metrics: Metrics }[]> {
-  const results: { candidate: Candidate; pattern: Pattern; metrics: Metrics }[] = [];
-  const references = new Map<string, ImageData>();
+  evaluate = makeEvaluator(source, base),
+): Promise<Evaluated[]> {
+  const results: Evaluated[] = [];
   let sliceStart = performance.now();
   for (let i = 0; i < candidates.length; i++) {
     if (signal?.aborted) break;
-    const c = candidates[i]!;
-    const { pattern, sampled } = buildPattern(source, candidateSettings(base, c));
-    if (pattern.total > 0 && sampled) {
-      const key = `${sampled.width}@${sampled.crop.x},${sampled.crop.y},${sampled.crop.w},${sampled.crop.h}`;
-      let reference = references.get(key);
-      if (!reference) {
-        reference = sampleGrid(source, sampled.width, sampled.crop, "smooth", false);
-        references.set(key, reference);
-      }
-      results.push({ candidate: c, pattern, metrics: scorePattern(pattern, reference, sampled.offsetX, sampled.offsetY) });
-    }
+    const r = evaluate(candidates[i]!);
+    if (r) results.push(r);
     if (performance.now() - sliceStart > sliceMs) {
-      onProgress?.({ done: i + 1, total: candidates.length });
+      onProgress?.({ phase: "search", done: i + 1, total: candidates.length });
       await yieldToBrowser();
       sliceStart = performance.now();
     }
   }
-  onProgress?.({ done: candidates.length, total: candidates.length });
+  onProgress?.({ phase: "search", done: candidates.length, total: candidates.length });
   return results;
+}
+
+// ---------------------------------------------------------------- refinement
+
+/*
+ * Refinement needs a score that doesn't depend on the rest of the scan, so
+ * these use fixed scales (typical ranges seen on real images) instead of the
+ * scan-relative 0–100 likeness/ease.
+ */
+
+/** 0 ≈ perfect; ~1 ≈ poor. */
+export function likenessCost(m: Metrics): number {
+  return 0.25 * (m.colorError / 10) + 0.25 * (m.detailError / 10) + 0.2 * (m.distanceError / 8) + 0.1 * (m.edgeError / 0.15) + 0.2 * (m.noise / 4);
+}
+
+/** Colour count on a log scale: 0 at 2 colours, 1 at 120. */
+export function colorCost(m: Metrics): number {
+  return Math.log(Math.max(2, m.colors) / 2) / Math.log(60);
+}
+
+/** 0 ≈ trivial to make; ~1 ≈ lots of colours, strays and small areas. */
+export function effortCost(m: Metrics): number {
+  return 0.45 * colorCost(m) + 0.35 * (m.strays / Math.max(1, m.beads) / 0.3) + 0.2 * (m.fragmentation / 50);
+}
+
+/**
+ * How much worse (as a fraction) refinement may make a suggestion's likeness
+ * while improving its own goal. Keeps "Simplest" from collapsing to 3 colours.
+ */
+export function likenessToleranceFor(label: string): number {
+  return label === "Simplest" ? 0.04 : 0.03;
+}
+
+/** What each kind of suggestion is fine-tuned for (lower is better). */
+export function objectiveFor(label: string): (m: Metrics) => number {
+  switch (label) {
+    case "Simplest":
+      return (m) => effortCost(m) + 0.35 * likenessCost(m);
+    case "Balanced":
+      return (m) => likenessCost(m) + 0.35 * effortCost(m);
+    case "Alternative":
+      return (m) => likenessCost(m) + 0.2 * effortCost(m);
+    default: // Most faithful, Smooth shading, Crisp
+      return (m) => likenessCost(m) + 0.06 * colorCost(m);
+  }
+}
+
+export type RefineMethod = "pattern" | "anneal";
+
+export interface RefineOptions {
+  method: RefineMethod;
+  /** Most extra candidates to try per suggestion. */
+  budget: number;
+  /** Seed for annealing's random moves (results are repeatable). */
+  seed?: number;
+  /** Max fractional loss of likeness allowed versus the starting point (default 3%). */
+  likenessTolerance?: number;
+}
+
+/** A continuous setting refinement may move, with its range and step sizes. */
+interface Dim {
+  key: "brightness" | "contrast" | "saturation" | "maxColors" | "ditherStrength";
+  lo: number;
+  hi: number;
+  step: number;
+  minStep: number;
+  /** Step in log space (colour count: ×1.3 rather than +n). */
+  log?: boolean;
+}
+
+const DIMS: Dim[] = [
+  { key: "maxColors", lo: 2, hi: 120, step: Math.log(1.35), minStep: Math.log(1.04), log: true },
+  { key: "brightness", lo: -60, hi: 60, step: 10, minStep: 2 },
+  { key: "contrast", lo: -60, hi: 60, step: 10, minStep: 2 },
+  { key: "saturation", lo: -60, hi: 80, step: 10, minStep: 2 },
+  // Dithered styles stay dithered: below ~30% it's barely there.
+  { key: "ditherStrength", lo: 30, hi: 100, step: 15, minStep: 3 },
+];
+
+function getDim(c: Candidate, d: Dim): number {
+  return d.key === "ditherStrength" ? c.dither.strength : c[d.key];
+}
+
+function withDim(c: Candidate, d: Dim, value: number): Candidate {
+  const v = Math.round(Math.min(d.hi, Math.max(d.lo, value)));
+  return d.key === "ditherStrength" ? { ...c, dither: { ...c.dither, strength: v } } : { ...c, [d.key]: v };
+}
+
+function move(c: Candidate, d: Dim, delta: number): Candidate {
+  const now = getDim(c, d);
+  const next = d.log ? Math.exp(Math.log(now) + delta) : now + delta;
+  let out = withDim(c, d, next);
+  // Integers: make sure a small step still moves.
+  if (getDim(out, d) === now && delta !== 0) out = withDim(c, d, now + Math.sign(delta));
+  return out;
+}
+
+/** Deterministic PRNG (mulberry32). */
+function rng(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Fine-tunes the continuous settings of `start` (its categorical choices stay
+ * fixed) to lower `objective`. Returns the best found and everything tried.
+ */
+export async function refine(
+  evaluate: (c: Candidate) => Evaluated | null,
+  start: Evaluated,
+  objective: (m: Metrics) => number,
+  opts: RefineOptions,
+  signal?: AbortSignal,
+  onStep?: () => void,
+): Promise<{ best: Evaluated; tried: Evaluated[] }> {
+  const dims = DIMS.filter((d) => d.key !== "ditherStrength" || start.candidate.dither.mode !== "none");
+  const tried: Evaluated[] = [];
+  const maxLikenessCost = likenessCost(start.metrics) * (1 + (opts.likenessTolerance ?? 0.03));
+  // Out-of-bounds results count as infinitely bad.
+  const cost = (m: Metrics) => (likenessCost(m) > maxLikenessCost ? Infinity : objective(m));
+  let best = start;
+  let bestCost = cost(start.metrics);
+  let spent = 0;
+  let sliceStart = performance.now();
+
+  const tryCandidate = async (c: Candidate): Promise<Evaluated | null> => {
+    spent++;
+    const r = evaluate(c);
+    if (r) tried.push(r);
+    onStep?.();
+    if (performance.now() - sliceStart > 24) {
+      await yieldToBrowser();
+      sliceStart = performance.now();
+    }
+    return r;
+  };
+
+  if (opts.method === "pattern") {
+    // Compass search: try ± each setting; keep any improvement; halve steps when stuck.
+    const steps = new Map(dims.map((d) => [d.key, d.step]));
+    while (spent < opts.budget && !signal?.aborted) {
+      let improved = false;
+      for (const d of dims) {
+        for (const dir of [1, -1]) {
+          if (spent >= opts.budget || signal?.aborted) break;
+          const next = move(best.candidate, d, dir * steps.get(d.key)!);
+          if (getDim(next, d) === getDim(best.candidate, d)) continue; // at the edge
+          const r = await tryCandidate(next);
+          if (r && cost(r.metrics) < bestCost - 1e-9) {
+            best = r;
+            bestCost = cost(r.metrics);
+            improved = true;
+            break;
+          }
+        }
+      }
+      if (!improved) {
+        let anyLeft = false;
+        for (const d of dims) {
+          const s = steps.get(d.key)! / 2;
+          steps.set(d.key, s);
+          if (s >= d.minStep) anyLeft = true;
+        }
+        if (!anyLeft) break;
+      }
+    }
+  } else {
+    // Simulated annealing: random moves, sometimes accepting worse ones while "hot".
+    const random = rng(opts.seed ?? 1);
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
+    let current = start;
+    let currentCost = bestCost;
+    const t0 = 0.03;
+    const t1 = 0.0005;
+    for (let i = 0; i < opts.budget && !signal?.aborted; i++) {
+      const temp = t0 * Math.pow(t1 / t0, i / Math.max(1, opts.budget - 1));
+      const d = dims[Math.floor(random() * dims.length)]!;
+      const scale = d.step * (0.3 + (temp / t0) * 0.7);
+      const next = move(current.candidate, d, gauss() * scale);
+      const r = await tryCandidate(next);
+      if (!r) continue;
+      const c = cost(r.metrics);
+      if (c < currentCost || random() < Math.exp((currentCost - c) / temp)) {
+        current = r;
+        currentCost = c;
+      }
+      if (c < bestCost) {
+        best = r;
+        bestCost = c;
+      }
+    }
+  }
+  return { best, tried };
+}
+
+// ---------------------------------------------------------------- the whole thing
+
+export interface AutoOptions {
+  space: SearchSpace;
+  count: number;
+  limit: number;
+  /** Fine-tune each suggestion's continuous settings after the grid search. */
+  refine?: RefineOptions | null;
+}
+
+export interface RefinedSuggestion extends Suggestion {
+  /** The grid candidate this was fine-tuned from (absent if refinement didn't help). */
+  refinedFrom?: Candidate;
+}
+
+/** Grid search → suggestions → (optionally) fine-tune each one. */
+export async function autoSuggest(
+  source: ImageSource,
+  base: PipelineSettings,
+  options: AutoOptions,
+  onProgress?: (p: ScanProgress) => void,
+  signal?: AbortSignal,
+): Promise<RefinedSuggestion[]> {
+  const evaluate = makeEvaluator(source, base);
+  const grid = await scan(source, base, enumerateCandidates(options.space, options.limit), onProgress, signal, 24, evaluate);
+  if (!grid.length) return [];
+  const picks = suggest(rate(grid), options.count);
+  if (!options.refine || signal?.aborted) return picks;
+
+  const total = picks.length * options.refine.budget;
+  let done = 0;
+  const pool: Evaluated[] = [...grid];
+  const refined: { label: string; reason: string; from: Candidate; best: Evaluated }[] = [];
+  for (const [n, pick] of picks.entries()) {
+    if (signal?.aborted) break;
+    const { best, tried } = await refine(
+      evaluate,
+      pick,
+      objectiveFor(pick.label),
+      { likenessTolerance: likenessToleranceFor(pick.label), ...options.refine, seed: (options.refine.seed ?? 1) + n },
+      signal,
+      () => onProgress?.({ phase: "refine", done: ++done, total }),
+    );
+    pool.push(...tried);
+    refined.push({ label: pick.label, reason: pick.reason, from: pick.candidate, best });
+  }
+  onProgress?.({ phase: "refine", done: total, total });
+
+  // Re-rate everything together so the 0–100 scores stay comparable.
+  const rated = new Map(rate(pool).map((r) => [JSON.stringify(r.candidate), r]));
+  const out: RefinedSuggestion[] = [];
+  for (const r of refined) {
+    const s = rated.get(JSON.stringify(r.best.candidate))!;
+    if (out.some((o) => difference(o.pattern, s.pattern) < MIN_DIFFERENCE)) continue;
+    const changed = JSON.stringify(r.best.candidate) !== JSON.stringify(r.from);
+    out.push({ ...s, label: r.label, reason: r.reason, ...(changed ? { refinedFrom: r.from } : {}) });
+  }
+  return out;
 }

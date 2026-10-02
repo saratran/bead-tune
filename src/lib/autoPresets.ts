@@ -1,5 +1,14 @@
 /** Auto mode presets: built-in starting points plus the user's own, saved in this browser. */
-import { DEFAULT_SEARCH_SPACE, SEARCH_OPTIONS, type SearchSpace } from "./auto";
+import { DEFAULT_SEARCH_SPACE, SEARCH_OPTIONS, type RefineMethod, type SearchSpace } from "./auto";
+
+export interface RefineConfig {
+  enabled: boolean;
+  method: RefineMethod;
+  /** Extra candidates to try per suggestion. */
+  budget: number;
+}
+
+export const DEFAULT_REFINE: RefineConfig = { enabled: true, method: "pattern", budget: 40 };
 
 export interface AutoConfig {
   space: SearchSpace;
@@ -7,6 +16,8 @@ export interface AutoConfig {
   count: number;
   /** Most combinations to try; above this an evenly spread subset is used. */
   limit: number;
+  /** Fine-tuning of each suggestion after the grid search. */
+  refine: RefineConfig;
 }
 
 export interface AutoPreset extends AutoConfig {
@@ -25,6 +36,7 @@ export const BUILT_IN_PRESETS: AutoPreset[] = [
     space: DEFAULT_SEARCH_SPACE,
     count: 6,
     limit: 300,
+    refine: DEFAULT_REFINE,
   },
   {
     id: "builtin:quick",
@@ -33,6 +45,7 @@ export const BUILT_IN_PRESETS: AutoPreset[] = [
     space: { ...DEFAULT_SEARCH_SPACE, sampling: ["smooth"], maxColors: [12, 24, 40], dither: [none], cleanup: [0, 1], contrast: [0], saturation: [0] },
     count: 4,
     limit: 100,
+    refine: { ...DEFAULT_REFINE, budget: 20 },
   },
   {
     id: "builtin:photo",
@@ -50,6 +63,7 @@ export const BUILT_IN_PRESETS: AutoPreset[] = [
     },
     count: 6,
     limit: 400,
+    refine: DEFAULT_REFINE,
   },
   {
     id: "builtin:drawing",
@@ -67,6 +81,7 @@ export const BUILT_IN_PRESETS: AutoPreset[] = [
     },
     count: 6,
     limit: 300,
+    refine: DEFAULT_REFINE,
   },
   {
     id: "builtin:thorough",
@@ -85,6 +100,7 @@ export const BUILT_IN_PRESETS: AutoPreset[] = [
     },
     count: 8,
     limit: 1000,
+    refine: { ...DEFAULT_REFINE, budget: 80 },
   },
 ];
 
@@ -107,8 +123,13 @@ function write(key: string, value: unknown): void {
 }
 
 /** Fills in settings added after a preset was saved. */
-function normalise(config: AutoConfig): AutoConfig {
-  return { count: config.count ?? 6, limit: config.limit ?? 300, space: { ...DEFAULT_SEARCH_SPACE, ...config.space } };
+function normalise(config: Partial<AutoConfig>): AutoConfig {
+  return {
+    count: config.count ?? 6,
+    limit: config.limit ?? 300,
+    space: { ...DEFAULT_SEARCH_SPACE, ...config.space },
+    refine: { ...DEFAULT_REFINE, ...config.refine },
+  };
 }
 
 export function userPresets(): AutoPreset[] {
@@ -137,7 +158,7 @@ export function deletePreset(id: string): void {
 
 /** The configuration used last time (or the default preset). */
 export function loadLastConfig(): AutoConfig {
-  return normalise(read<AutoConfig>(CONFIG_KEY, BUILT_IN_PRESETS[0]!));
+  return normalise(read<Partial<AutoConfig>>(CONFIG_KEY, BUILT_IN_PRESETS[0]!));
 }
 
 export function saveLastConfig(config: AutoConfig): void {

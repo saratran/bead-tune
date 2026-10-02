@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  autoSuggest,
   countCombinations,
-  enumerateCandidates,
-  rate,
-  scan,
   SEARCH_OPTIONS,
-  suggest,
   type Candidate,
   type DitherChoice,
+  type RefinedSuggestion,
+  type RefineMethod,
+  type ScanProgress,
   type SearchSpace,
-  type Suggestion,
 } from "../lib/auto";
 import { allPresets, deletePreset, loadLastConfig, saveLastConfig, savePreset, type AutoConfig, type AutoPreset } from "../lib/autoPresets";
+import { sameCandidate, type Bookmark } from "../lib/bookmarks";
 import type { PipelineSettings } from "../lib/pipeline";
-import { drawPattern } from "../lib/render";
+import { drawPattern, patternThumbnail } from "../lib/render";
 import type { ImageSource } from "../lib/sampling";
 import { RangeInput } from "./RangeInput";
 
@@ -21,13 +21,26 @@ interface Props {
   source: ImageSource;
   base: PipelineSettings;
   /** Suggestions from an earlier scan of the same image and settings, if any. */
-  results: Suggestion[] | null;
-  onResults: (s: Suggestion[]) => void;
-  onApply: (s: Suggestion) => void;
+  results: RefinedSuggestion[] | null;
+  onResults: (s: RefinedSuggestion[]) => void;
+  onApply: (s: { label: string; candidate: Candidate }) => void;
+  /** Bookmarks for this image, kept across scans. */
+  bookmarks: Bookmark[];
+  onBookmarksChange: (b: Bookmark[]) => void;
   onClose: () => void;
 }
 
 const LIMITS = [100, 200, 300, 600, 1000, 2000];
+const BUDGETS = [20, 40, 80, 150];
+
+/** What fine-tuning changed, e.g. "31 colours (was 24) · brightness +6". */
+export function describeChanges(from: Candidate, to: Candidate): string {
+  const parts: string[] = [];
+  if (from.maxColors !== to.maxColors) parts.push(`${to.maxColors} colours (was ${from.maxColors})`);
+  for (const k of ["brightness", "contrast", "saturation"] as const) if (from[k] !== to[k]) parts.push(`${k} ${signed(to[k])} (was ${signed(from[k])})`);
+  if (from.dither.strength !== to.dither.strength) parts.push(`dither ${to.dither.strength}% (was ${from.dither.strength}%)`);
+  return parts.join(" · ");
+}
 
 const ditherLabel = (d: DitherChoice) => (d.mode === "none" ? "Off" : `${d.mode === "diffusion" ? "Diffusion" : "Ordered"} ${d.strength}%`);
 const sameDither = (a: DitherChoice, b: DitherChoice) => a.mode === b.mode && a.strength === b.strength;
@@ -76,7 +89,7 @@ function Chips<T>({ label, options, selected, same = (a, b) => a === b, format, 
   );
 }
 
-function Thumbnail({ s }: { s: Suggestion }) {
+function Thumbnail({ s }: { s: { pattern: RefinedSuggestion["pattern"] } }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -90,12 +103,12 @@ function Thumbnail({ s }: { s: Suggestion }) {
   return <canvas ref={ref} className="auto-thumb" />;
 }
 
-export function AutoDialog({ source, base, results, onResults, onApply, onClose }: Props) {
+export function AutoDialog({ source, base, results, onResults, onApply, bookmarks, onBookmarksChange, onClose }: Props) {
   const [config, setConfigState] = useState<AutoConfig>(loadLastConfig);
   const [presets, setPresets] = useState<AutoPreset[]>(allPresets);
   const [presetId, setPresetId] = useState("");
   const [naming, setNaming] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [showSpace, setShowSpace] = useState(!results);
   const abort = useRef<AbortController | null>(null);
 
@@ -120,21 +133,51 @@ export function AutoDialog({ source, base, results, onResults, onApply, onClose 
   const run = async () => {
     const ctrl = new AbortController();
     abort.current = ctrl;
-    const candidates = enumerateCandidates(config.space, config.limit);
-    setProgress({ done: 0, total: candidates.length });
-    const found = await scan(source, base, candidates, setProgress, ctrl.signal);
+    setProgress({ phase: "search", done: 0, total: trying });
+    const found = await autoSuggest(
+      source,
+      base,
+      { space: config.space, count: config.count, limit: config.limit, refine: config.refine.enabled ? { method: config.refine.method, budget: config.refine.budget } : null },
+      setProgress,
+      ctrl.signal,
+    );
     abort.current = null;
     setProgress(null);
     if (found.length) {
-      onResults(suggest(rate(found), config.count));
+      onResults(found);
       setShowSpace(false);
     }
+  };
+
+  const bookmarkOf = (c: Candidate) => bookmarks.find((b) => sameCandidate(b.candidate, c));
+  const toggleBookmark = (s: RefinedSuggestion) => {
+    const existing = bookmarkOf(s.candidate);
+    if (existing) {
+      onBookmarksChange(bookmarks.filter((b) => b !== existing));
+      return;
+    }
+    onBookmarksChange([
+      ...bookmarks,
+      {
+        id: `bm-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        label: s.label,
+        candidate: s.candidate,
+        thumbnail: patternThumbnail(s.pattern),
+        likeness: s.likeness,
+        ease: s.ease,
+        colors: s.metrics.colors,
+        beads: s.metrics.beads,
+        strays: s.metrics.strays,
+        createdAt: Date.now(),
+        context: { width: base.width, brandId: base.options.palette[0]?.id.split(":")[0] ?? "" },
+      },
+    ]);
   };
 
   const choosePreset = (id: string) => {
     const p = presets.find((x) => x.id === id);
     if (!p) return;
-    const c = { space: p.space, count: p.count, limit: p.limit };
+    const c = { space: p.space, count: p.count, limit: p.limit, refine: p.refine };
     setConfigState(c);
     saveLastConfig(c);
     setPresetId(id);
@@ -234,6 +277,40 @@ export function AutoDialog({ source, base, results, onResults, onApply, onClose 
                 </select>
               </div>
             </div>
+            <div className="auto-refine">
+              <label className="toggle">
+                <input type="checkbox" checked={config.refine.enabled} onChange={(e) => setConfig({ ...config, refine: { ...config.refine, enabled: e.target.checked } })} />
+                <span className="track" aria-hidden />
+                <span>Fine-tune suggestions</span>
+              </label>
+              {config.refine.enabled && (
+                <>
+                  <div className="segmented" role="radiogroup" aria-label="Fine-tuning method">
+                    {(
+                      [
+                        ["pattern", "Pattern search"],
+                        ["anneal", "Simulated annealing"],
+                      ] as [RefineMethod, string][]
+                    ).map(([m, label]) => (
+                      <button key={m} role="radio" aria-checked={config.refine.method === m} className={config.refine.method === m ? "on" : ""} onClick={() => setConfig({ ...config, refine: { ...config.refine, method: m } })}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <select aria-label="Fine-tuning effort" className="input" value={config.refine.budget} onChange={(e) => setConfig({ ...config, refine: { ...config.refine, budget: Number(e.target.value) } })}>
+                    {BUDGETS.map((n) => (
+                      <option key={n} value={n}>
+                        {n} tries per suggestion
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <p className="hint">
+                After the search, each suggestion's brightness, contrast, saturation, colour count and dither strength are nudged to the best in-between values. Pattern search is usually
+                better for this; annealing explores more randomly.
+              </p>
+            </div>
           </details>
 
           <div className="auto-run">
@@ -244,6 +321,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, onClose 
             </span>
             {progress ? (
               <>
+                <span className="small">{progress.phase === "refine" ? "Fine-tuning…" : "Searching…"}</span>
                 <progress max={progress.total} value={progress.done} aria-label="Scan progress" />
                 <span className="small">
                   {progress.done} / {progress.total}
@@ -259,15 +337,65 @@ export function AutoDialog({ source, base, results, onResults, onApply, onClose 
             )}
           </div>
 
+          {bookmarks.length > 0 && (
+            <section className="auto-bookmarks" aria-label="Bookmarks">
+              <h4>★ Bookmarks ({bookmarks.length})</h4>
+              <ul>
+                {[...bookmarks].reverse().map((b) => (
+                  <li key={b.id} className="auto-card bookmark">
+                    <img className="auto-thumb" src={b.thumbnail} alt="" />
+                    <div className="auto-card-info">
+                      <strong>{b.label}</strong>
+                      <div className="auto-scores small">
+                        <span>Likeness {b.likeness}</span>
+                        <span>Ease {b.ease}</span>
+                      </div>
+                      <span className="small">
+                        {b.colors} colours · {b.beads.toLocaleString()} beads · {b.strays} stray
+                      </span>
+                      <span className="muted small auto-settings">{describeCandidate(b.candidate)}</span>
+                      {b.context.width !== base.width && <span className="muted small">Made at {b.context.width} beads wide</span>}
+                      <div className="row">
+                        <button className="btn btn-primary" onClick={() => onApply(b)}>
+                          Use this
+                        </button>
+                        <button className="btn btn-ghost" onClick={() => onBookmarksChange(bookmarks.filter((x) => x.id !== b.id))}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {results && !progress && (
             <div className="auto-results">
+              <h4>Suggestions</h4>
               <p className="hint">Scores compare the suggestions with each other: likeness to your original image, and ease of making (fewer colours and stray beads).</p>
               <ul>
                 {results.map((s, i) => (
                   <li key={i} className="auto-card">
                     <Thumbnail s={s} />
                     <div className="auto-card-info">
-                      <strong>{s.label}</strong>
+                      <div className="auto-card-title">
+                        <strong>{s.label}</strong>
+                        {s.refinedFrom && (
+                          <span className="badge" title={`Fine-tuned: ${describeChanges(s.refinedFrom, s.candidate)}`}>
+                            Fine-tuned
+                          </span>
+                        )}
+                        <button
+                          className={`star-btn ${bookmarkOf(s.candidate) ? "on" : ""}`}
+                          aria-pressed={!!bookmarkOf(s.candidate)}
+                          aria-label={bookmarkOf(s.candidate) ? `Remove bookmark: ${s.label}` : `Bookmark ${s.label}`}
+                          title={bookmarkOf(s.candidate) ? "Bookmarked" : "Bookmark"}
+                          onClick={() => toggleBookmark(s)}
+                        >
+                          {bookmarkOf(s.candidate) ? "★" : "☆"}
+                        </button>
+                      </div>
                       <span className="muted small">{s.reason}</span>
                       <div className="auto-scores small">
                         <span>Likeness {s.likeness}</span>

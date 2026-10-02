@@ -7,7 +7,8 @@ import { PatternView, type EditTool } from "./components/PatternView";
 import { ProjectsDialog, type OpenProject } from "./components/ProjectsDialog";
 import { CropDialog } from "./components/CropDialog";
 import { AutoDialog } from "./components/AutoDialog";
-import type { Suggestion } from "./lib/auto";
+import type { Candidate, RefinedSuggestion } from "./lib/auto";
+import { imageFingerprint, loadBookmarks, mergeBookmarks, saveBookmarks, type Bookmark } from "./lib/bookmarks";
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
 import { applyEdits, type Edits } from "./lib/cleanup";
@@ -21,7 +22,7 @@ import { ExportDialog } from "./components/ExportDialog";
 import { DisplayControls, EditBar, type DisplaySettings } from "./components/PatternControls";
 import { Toggle } from "./components/Toggle";
 import { DEFAULT_EXPORT, type ExportSettings } from "./lib/export";
-import { drawPattern } from "./lib/render";
+import { patternThumbnail } from "./lib/render";
 import { makeSampleImage } from "./lib/sample";
 
 const WIDTH_PRESETS = [52, 78, 104];
@@ -99,7 +100,6 @@ function imageId(img: HTMLImageElement): number {
   if (!id) imageIds.set(img, (id = nextImageId++));
   return id;
 }
-const THUMB_SIZE = 160;
 
 /** Re-encodes an image as PNG (for images that don't come from a file, like the sample). */
 function imageToBlob(img: HTMLImageElement): Promise<Blob> {
@@ -110,23 +110,7 @@ function imageToBlob(img: HTMLImageElement): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't save the image."))), "image/png"));
 }
 
-/** Small square-cell picture of the pattern for the project list. */
-function makeThumbnail(p: Pattern): string {
-  const cell = Math.max(1, Math.floor(THUMB_SIZE / Math.max(p.width, p.height)));
-  const canvas = document.createElement("canvas");
-  canvas.width = p.width * cell;
-  canvas.height = p.height * cell;
-  drawPattern(canvas.getContext("2d")!, p, {
-    cell,
-    shape: "square",
-    codes: false,
-    boardSize: p.width,
-    showBoards: false,
-    background: "#ffffff",
-    gridColor: "rgba(0, 0, 0, 0)",
-  });
-  return canvas.toDataURL("image/png");
-}
+
 
 /** Darkest colour in a palette — the natural default for outlines. */
 function darkest(colors: BeadColor[]): BeadColor {
@@ -277,13 +261,33 @@ export function App() {
   const result = useMemo(() => (source ? buildPattern(source, pipelineSettings(dSettings, dWidth)) : null), [source, dSettings, dWidth, pipelineSettings]);
 
   // Auto suggestions belong to the settings Auto doesn't change; reopening shows them until those change.
-  const [autoResults, setAutoResults] = useState<{ key: string; list: Suggestion[] } | null>(null);
+  const [autoResults, setAutoResults] = useState<{ key: string; list: RefinedSuggestion[] } | null>(null);
+
+  // Bookmarked suggestions belong to the image (by fingerprint), across scans and reloads.
+  const fingerprint = useMemo(() => (source ? imageFingerprint(source) : null), [source]);
+  const [bookmarks, setBookmarksState] = useState<Bookmark[]>([]);
+  // Bookmarks from a project being opened, merged in once its image is ready.
+  const pendingBookmarks = useRef<Bookmark[] | null>(null);
+  useEffect(() => {
+    if (!fingerprint) return setBookmarksState([]);
+    let list = loadBookmarks(fingerprint);
+    if (pendingBookmarks.current) {
+      list = mergeBookmarks(list, pendingBookmarks.current);
+      pendingBookmarks.current = null;
+      saveBookmarks(fingerprint, list);
+    }
+    setBookmarksState(list);
+  }, [fingerprint]);
+  const setBookmarks = (list: Bookmark[]) => {
+    setBookmarksState(list);
+    if (fingerprint) saveBookmarks(fingerprint, list);
+  };
   const autoKey = useMemo(() => {
     const { sampling, denoise, cleanup, maxColors, minBeads, metric, dither, ditherStrength, adjustments, ...fixed } = imageSettings;
     return JSON.stringify({ image: image ? imageId(image) : 0, brandId, width, crop, ownedOnly, excluded: [...excluded], outlineColor: outlineColor.id, fixed });
   }, [image, brandId, width, crop, ownedOnly, excluded, outlineColor, imageSettings]);
 
-  const applySuggestion = (sg: Suggestion) => {
+  const applySuggestion = (sg: { label: string; candidate: Candidate }) => {
     const c = sg.candidate;
     setImageSettings({
       ...imageSettings,
@@ -401,8 +405,9 @@ export function App() {
       excluded: [...excluded],
       swaps: [...swaps].map(([from, to]) => [from, to.id]),
       edits: { w: edits.w, h: edits.h, cells: [...edits.map].map(([i, c]) => [i, c?.id ?? null]) },
+      bookmarks,
     }),
-    [brandId, width, boardSize, imageSettings, crop, outlineId, ownedOnly, excluded, swaps, edits],
+    [brandId, width, boardSize, imageSettings, crop, outlineId, ownedOnly, excluded, swaps, edits, bookmarks],
   );
   const projectJson = useMemo(() => JSON.stringify(projectState), [projectState]);
   const dirty = !!project && projectJson !== savedJson;
@@ -467,7 +472,7 @@ export function App() {
       name,
       image: imageBlob,
       imageName: fileName,
-      thumbnail: makeThumbnail(pattern),
+      thumbnail: patternThumbnail(pattern),
       state: projectState,
     });
     if (location === "local") requestPersistentStorage();
@@ -499,6 +504,7 @@ export function App() {
     setBoardInput(st.boardSize);
     setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...st.image });
     setCrop(st.crop ?? FULL_CROP);
+    pendingBookmarks.current = st.bookmarks ?? null;
     setOutlineId(st.outlineId);
     setOwnedOnly(st.ownedOnly);
     setExcluded(new Set(st.excluded));
@@ -1002,6 +1008,8 @@ export function App() {
           results={autoResults?.key === autoKey ? autoResults.list : null}
           onResults={(list) => setAutoResults({ key: autoKey, list })}
           onApply={applySuggestion}
+          bookmarks={bookmarks}
+          onBookmarksChange={setBookmarks}
           onClose={() => setModal(null)}
         />
       )}
