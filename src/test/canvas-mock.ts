@@ -20,6 +20,10 @@ export interface DrawCall {
 const RECORDED = [
   "arc",
   "beginPath",
+  "bezierCurveTo",
+  "closePath",
+  "quadraticCurveTo",
+  "strokeText",
   "clearRect",
   "clip",
   "drawImage",
@@ -38,6 +42,14 @@ const RECORDED = [
   "strokeRect",
   "translate",
 ] as const;
+
+type PixelProvider = (w: number, h: number) => Uint8ClampedArray;
+let pixelProvider: PixelProvider | null = null;
+
+/** Makes every getImageData call return these pixels (e.g. to give App a real picture). Pass null to reset. */
+export function mockPixels(provider: PixelProvider | null): void {
+  pixelProvider = provider;
+}
 
 export class MockContext2D {
   calls: DrawCall[] = [];
@@ -79,8 +91,11 @@ export class MockContext2D {
     return { width: text.length * px * 0.6 };
   }
 
+  imageSmoothingEnabled = true;
+
   getImageData(_x: number, _y: number, w: number, h: number) {
-    return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h, colorSpace: "srgb" };
+    const data = pixelProvider ? pixelProvider(w, h) : new Uint8ClampedArray(w * h * 4);
+    return { data, width: w, height: h, colorSpace: "srgb" };
   }
 
   named(name: string): DrawCall[] {

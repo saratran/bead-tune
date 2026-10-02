@@ -1,4 +1,4 @@
-import { labDistSq, rgbToLab, type Lab } from "./color";
+import { colorDistance, labDistSq, rgbToLab, type ColorMetric, type Lab, type RGB } from "./color";
 import type { BeadColor } from "./palettes";
 
 export interface Adjustments {
@@ -9,13 +9,36 @@ export interface Adjustments {
 
 export const DEFAULT_ADJUSTMENTS: Adjustments = { brightness: 0, contrast: 0, saturation: 0 };
 
+export type DitherMode = "none" | "diffusion" | "ordered";
+
 export interface PatternOptions {
-  maxColors: number;
-  dither: boolean;
-  removeBackground: boolean;
   palette: BeadColor[];
+  maxColors: number;
+  /** Colours used by fewer beads than this are merged into their nearest neighbour (0/1 = off). */
+  minBeads: number;
+  dither: DitherMode;
+  /** 0–100. */
+  ditherStrength: number;
+  metric: ColorMetric;
+  removeBackground: boolean;
+  /** How different (Lab ΔE) a pixel may be from the background colour and still count as background. */
+  bgTolerance: number;
+  /** Background colour to remove; detected from the image border when omitted. */
+  bgColor?: RGB | null;
   adjustments: Adjustments;
 }
+
+export const DEFAULT_PATTERN_OPTIONS: Omit<PatternOptions, "palette"> = {
+  maxColors: 24,
+  minBeads: 0,
+  dither: "none",
+  ditherStrength: 85,
+  metric: "standard",
+  removeBackground: false,
+  bgTolerance: 14,
+  bgColor: null,
+  adjustments: DEFAULT_ADJUSTMENTS,
+};
 
 export interface Pattern {
   width: number;
@@ -28,39 +51,8 @@ export interface Pattern {
   total: number;
 }
 
-const EMPTY = -1;
-const BG_TOLERANCE_SQ = 14 * 14;
-const DITHER_STRENGTH = 0.85;
-
-/** Downscale an image to `width` beads wide, keeping aspect ratio, with stepwise halving for quality. */
-export function sampleImage(img: HTMLImageElement | ImageBitmap, width: number): ImageData {
-  const srcW = img.width;
-  const srcH = img.height;
-  const height = Math.max(1, Math.round((width * srcH) / srcW));
-
-  let cur: HTMLCanvasElement | HTMLImageElement | ImageBitmap = img;
-  let curW = srcW;
-  let curH = srcH;
-  while (curW / 2 >= width * 2) {
-    const next = document.createElement("canvas");
-    next.width = Math.round(curW / 2);
-    next.height = Math.round(curH / 2);
-    const ctx = next.getContext("2d")!;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(cur, 0, 0, next.width, next.height);
-    cur = next;
-    curW = next.width;
-    curH = next.height;
-  }
-
-  const out = document.createElement("canvas");
-  out.width = width;
-  out.height = height;
-  const ctx = out.getContext("2d", { willReadFrequently: true })!;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(cur, 0, 0, width, height);
-  return ctx.getImageData(0, 0, width, height);
-}
+export const EMPTY = -1;
+const MAX_REDUCE_PASSES = 6;
 
 function clamp(v: number): number {
   return v < 0 ? 0 : v > 255 ? 255 : v;
@@ -89,53 +81,64 @@ function adjustPixels(data: Uint8ClampedArray, adj: Adjustments): Float32Array {
   return out;
 }
 
-/**
- * Marks transparent pixels and pixels connected to the border that match the
- * dominant border colour as empty.
- */
-function backgroundMask(rgb: Float32Array, alpha: Uint8ClampedArray, w: number, h: number, remove: boolean): Uint8Array {
-  const n = w * h;
-  const mask = new Uint8Array(n);
-  for (let i = 0; i < n; i++) if (alpha[i * 4 + 3]! < 128) mask[i] = 1;
-  if (!remove) return mask;
-
+function borderIndices(w: number, h: number): number[] {
   const border: number[] = [];
   for (let x = 0; x < w; x++) border.push(x, (h - 1) * w + x);
   for (let y = 1; y < h - 1; y++) border.push(y * w, y * w + w - 1);
+  return border;
+}
 
-  // Dominant border colour via coarse buckets.
-  const buckets = new Map<number, { n: number; r: number; g: number; b: number }>();
-  for (const i of border) {
-    if (mask[i]) continue;
+/** Most common colour along the image border (after adjustments), or null if the border is transparent. */
+export function detectBackground(image: ImageData, adjustments: Adjustments = DEFAULT_ADJUSTMENTS): RGB | null {
+  const rgb = adjustPixels(image.data, adjustments);
+  const buckets = new Map<number, [n: number, r: number, g: number, b: number]>();
+  for (const i of borderIndices(image.width, image.height)) {
+    if (image.data[i * 4 + 3]! < 128) continue;
     const r = rgb[i * 3]!, g = rgb[i * 3 + 1]!, b = rgb[i * 3 + 2]!;
     const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
-    const bk = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
-    bk.n++;
-    bk.r += r;
-    bk.g += g;
-    bk.b += b;
-    buckets.set(key, bk);
+    const bk = buckets.get(key);
+    if (bk) {
+      bk[0]++;
+      bk[1] += r;
+      bk[2] += g;
+      bk[3] += b;
+    } else {
+      buckets.set(key, [1, r, g, b]);
+    }
   }
-  let best: { n: number; r: number; g: number; b: number } | undefined;
-  for (const bk of buckets.values()) if (!best || bk.n > best.n) best = bk;
+  let best: [number, number, number, number] | undefined;
+  for (const bk of buckets.values()) if (!best || bk[0] > best[0]) best = bk;
+  return best ? [best[1] / best[0], best[2] / best[0], best[3] / best[0]] : null;
+}
+
+/**
+ * Marks transparent pixels, plus pixels connected to the border that are
+ * within `tolerance` of the background colour, as empty.
+ */
+function backgroundMask(rgb: Float32Array, image: ImageData, opts: PatternOptions): Uint8Array {
+  const { width: w, height: h, data: alpha } = image;
+  const n = w * h;
+  const mask = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (alpha[i * 4 + 3]! < 128) mask[i] = 1;
+  if (!opts.removeBackground) return mask;
+
+  const bg = opts.bgColor ?? detectBackground(image, opts.adjustments);
+  const bgLab = bg ? rgbToLab(...bg) : undefined;
+  const tolSq = opts.bgTolerance * opts.bgTolerance;
+  const isBg = (i: number) =>
+    mask[i] === 1 || (bgLab !== undefined && labDistSq(rgbToLab(rgb[i * 3]!, rgb[i * 3 + 1]!, rgb[i * 3 + 2]!), bgLab) <= tolSq);
 
   const queue: number[] = [];
   const seen = new Uint8Array(n);
-  for (const i of border) {
-    if (mask[i]) {
+  for (const i of borderIndices(w, h)) {
+    if (!seen[i] && isBg(i)) {
       seen[i] = 1;
       queue.push(i);
     }
   }
-  let bgLab: Lab | undefined;
-  if (best) {
-    bgLab = rgbToLab(best.r / best.n, best.g / best.n, best.b / best.n);
-  }
-  const isBg = (i: number) =>
-    mask[i] === 1 || (bgLab !== undefined && labDistSq(rgbToLab(rgb[i * 3]!, rgb[i * 3 + 1]!, rgb[i * 3 + 2]!), bgLab) < BG_TOLERANCE_SQ);
-
-  for (const i of border) {
-    if (!seen[i] && isBg(i)) {
+  // Transparent pixels anywhere also connect background regions.
+  for (let i = 0; i < n; i++) {
+    if (mask[i] && !seen[i]) {
       seen[i] = 1;
       queue.push(i);
     }
@@ -145,8 +148,7 @@ function backgroundMask(rgb: Float32Array, alpha: Uint8ClampedArray, w: number, 
     mask[i] = 1;
     const x = i % w;
     const y = (i / w) | 0;
-    const neighbours = [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1];
-    for (const j of neighbours) {
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
       if (j >= 0 && !seen[j]) {
         seen[j] = 1;
         if (isBg(j)) queue.push(j);
@@ -156,18 +158,18 @@ function backgroundMask(rgb: Float32Array, alpha: Uint8ClampedArray, w: number, 
   return mask;
 }
 
-/** Nearest-palette lookup restricted to `allowed`, memoised per quantised RGB. */
-function makeMatcher(palette: BeadColor[], allowed: number[]) {
+/** Nearest-palette lookup restricted to `allowed`, memoised per RGB value. */
+function makeMatcher(palette: BeadColor[], allowed: number[], distance: (a: Lab, b: Lab) => number) {
   const cache = new Map<number, number>();
   return (r: number, g: number, b: number): number => {
     const key = ((r | 0) << 16) | ((g | 0) << 8) | (b | 0);
     const hit = cache.get(key);
     if (hit !== undefined) return hit;
-    const lab = rgbToLab(r, g, b);
+    const lab = rgbToLab(r | 0, g | 0, b | 0);
     let bestIdx = allowed[0]!;
     let bestD = Infinity;
     for (const idx of allowed) {
-      const d = labDistSq(lab, palette[idx]!.lab);
+      const d = distance(lab, palette[idx]!.lab);
       if (d < bestD) {
         bestD = d;
         bestIdx = idx;
@@ -183,7 +185,7 @@ function makeMatcher(palette: BeadColor[], allowed: number[]) {
  * pixels would be cheapest to repaint with their nearest remaining colour.
  * This keeps small-but-distinct details (eyes, outlines) better than top-N by count.
  */
-function reducePalette(palette: BeadColor[], counts: number[], max: number): number[] {
+function reducePalette(palette: BeadColor[], counts: number[], max: number, distance: (a: Lab, b: Lab) => number): number[] {
   const kept = counts.map((c, i) => (c > 0 ? i : -1)).filter((i) => i >= 0);
   const weight = [...counts];
   while (kept.length > max) {
@@ -196,13 +198,13 @@ function reducePalette(palette: BeadColor[], counts: number[], max: number): num
       let nd = Infinity;
       for (let b = 0; b < kept.length; b++) {
         if (a === b) continue;
-        const d = labDistSq(palette[ia]!.lab, palette[kept[b]!]!.lab);
+        const d = distance(palette[ia]!.lab, palette[kept[b]!]!.lab);
         if (d < nd) {
           nd = d;
           nearest = kept[b]!;
         }
       }
-      const cost = weight[ia]! * Math.sqrt(nd);
+      const cost = weight[ia]! * nd;
       if (cost < worstCost) {
         worstCost = cost;
         worst = a;
@@ -215,7 +217,22 @@ function reducePalette(palette: BeadColor[], counts: number[], max: number): num
   return kept;
 }
 
-/** Maps each non-masked pixel to a palette index in `allowed`, optionally with Floyd–Steinberg diffusion. */
+/** 8 × 8 Bayer threshold matrix, values 0–63. */
+const BAYER_8 = (() => {
+  let m = [[0]];
+  for (let size = 1; size < 8; size *= 2) {
+    m = [
+      ...m.map((row) => [...row.map((v) => 4 * v), ...row.map((v) => 4 * v + 2)]),
+      ...m.map((row) => [...row.map((v) => 4 * v + 3), ...row.map((v) => 4 * v + 1)]),
+    ];
+  }
+  return m.flat();
+})();
+
+/** How far ordered dithering may push a pixel's brightness at full strength. */
+const ORDERED_SPREAD = 64;
+
+/** Maps each non-masked pixel to a palette index in `allowed`, with the chosen dithering. */
 function mapPixels(
   rgb: Float32Array,
   mask: Uint8Array,
@@ -223,11 +240,14 @@ function mapPixels(
   h: number,
   palette: BeadColor[],
   allowed: number[],
-  dither: boolean,
+  opts: PatternOptions,
+  distance: (a: Lab, b: Lab) => number,
 ): Int16Array {
-  const match = makeMatcher(palette, allowed);
+  const match = makeMatcher(palette, allowed, distance);
   const raw = new Int16Array(w * h).fill(EMPTY);
-  const buf = dither ? Float32Array.from(rgb) : rgb;
+  const strength = Math.max(0, Math.min(100, opts.ditherStrength)) / 100;
+  const mode = strength > 0 ? opts.dither : "none";
+  const buf = mode === "diffusion" ? Float32Array.from(rgb) : rgb;
   const spread = (j: number, er: number, eg: number, eb: number, f: number) => {
     if (mask[j]) return;
     buf[j * 3] = buf[j * 3]! + er * f;
@@ -238,14 +258,20 @@ function mapPixels(
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       if (mask[i]) continue;
-      const r = clamp(buf[i * 3]!), g = clamp(buf[i * 3 + 1]!), b = clamp(buf[i * 3 + 2]!);
+      let r = clamp(buf[i * 3]!), g = clamp(buf[i * 3 + 1]!), b = clamp(buf[i * 3 + 2]!);
+      if (mode === "ordered") {
+        const t = ((BAYER_8[(y % 8) * 8 + (x % 8)]! + 0.5) / 64 - 0.5) * ORDERED_SPREAD * strength;
+        r = clamp(r + t);
+        g = clamp(g + t);
+        b = clamp(b + t);
+      }
       const idx = match(r, g, b);
       raw[i] = idx;
-      if (!dither) continue;
+      if (mode !== "diffusion") continue;
       const [pr, pg, pb] = palette[idx]!.rgb;
-      const er = (r - pr) * DITHER_STRENGTH;
-      const eg = (g - pg) * DITHER_STRENGTH;
-      const eb = (b - pb) * DITHER_STRENGTH;
+      const er = (r - pr) * strength;
+      const eg = (g - pg) * strength;
+      const eb = (b - pb) * strength;
       if (x < w - 1) spread(i + 1, er, eg, eb, 7 / 16);
       if (y < h - 1) {
         if (x > 0) spread(i + w - 1, er, eg, eb, 3 / 16);
@@ -257,33 +283,48 @@ function mapPixels(
   return raw;
 }
 
-export function generatePattern(image: ImageData, opts: PatternOptions): Pattern {
-  const { width: w, height: h, data } = image;
-  const n = w * h;
-  const palette = opts.palette;
-  const rgb = adjustPixels(data, opts.adjustments);
-  const mask = backgroundMask(rgb, data, w, h, opts.removeBackground);
-
-  if (palette.length === 0) {
-    return { width: w, height: h, cells: new Int16Array(n).fill(EMPTY), colors: [], counts: [], total: 0 };
-  }
-
-  // Pass 1: match against the full palette to measure usage. With dithering on,
-  // measure the dithered result too, so the colours dithering mixes survive reduction.
-  const all = palette.map((_, i) => i);
-  const usage = new Array<number>(palette.length).fill(0);
-  for (const idx of mapPixels(rgb, mask, w, h, palette, all, opts.dither)) {
-    if (idx !== EMPTY) usage[idx] = usage[idx]! + 1;
-  }
-  const chosen = reducePalette(palette, usage, Math.max(1, opts.maxColors));
-  if (chosen.length === 0) chosen.push(0);
-
-  // Pass 2: map onto the reduced palette.
-  return compact(w, h, mapPixels(rgb, mask, w, h, palette, chosen, opts.dither), palette);
+function usageOf(raw: Int16Array, size: number): number[] {
+  const usage = new Array<number>(size).fill(0);
+  for (const idx of raw) if (idx !== EMPTY) usage[idx]!++;
+  return usage;
 }
 
-/** Re-index cells from palette indices to a sorted list of only the used colours. */
-function compact(w: number, h: number, raw: Int16Array, palette: BeadColor[]): Pattern {
+export function generatePattern(image: ImageData, opts: PatternOptions): Pattern {
+  const { width: w, height: h } = image;
+  const palette = opts.palette;
+  const rgb = adjustPixels(image.data, opts.adjustments);
+  const mask = backgroundMask(rgb, image, opts);
+
+  if (palette.length === 0) return fromIndices(w, h, new Int16Array(w * h).fill(EMPTY), []);
+
+  const distance = colorDistance(opts.metric);
+  const map = (allowed: number[]) => mapPixels(rgb, mask, w, h, palette, allowed, opts, distance);
+
+  // Pass 1: match against the full palette to measure usage. With dithering on,
+  // this is the dithered result, so the colours dithering mixes survive reduction.
+  const usage = usageOf(
+    map(palette.map((_, i) => i)),
+    palette.length,
+  );
+  let chosen = reducePalette(palette, usage, Math.max(1, opts.maxColors), distance);
+  if (chosen.length === 0) chosen = [0];
+
+  // Pass 2: map onto the reduced palette, then drop rarely used colours and
+  // remap until every colour has at least `minBeads` beads.
+  let raw = map(chosen);
+  for (let pass = 0; pass < MAX_REDUCE_PASSES && opts.minBeads > 1 && chosen.length > 1; pass++) {
+    const counts = usageOf(raw, palette.length);
+    const keep = chosen.filter((i) => counts[i]! >= opts.minBeads);
+    if (keep.length === chosen.length) break;
+    chosen = keep.length > 0 ? keep : [chosen.reduce((a, b) => (counts[b]! > counts[a]! ? b : a))];
+    raw = map(chosen);
+  }
+
+  return fromIndices(w, h, raw, palette);
+}
+
+/** Builds a pattern from cells holding indices into `palette`, keeping only used colours sorted by count. */
+export function fromIndices(w: number, h: number, raw: Int16Array, palette: BeadColor[]): Pattern {
   const usage = new Map<number, number>();
   for (const idx of raw) if (idx !== EMPTY) usage.set(idx, (usage.get(idx) ?? 0) + 1);
   const order = [...usage.entries()].sort((a, b) => b[1] - a[1]);
@@ -315,5 +356,5 @@ export function applySwaps(pattern: Pattern, swaps: Map<string, BeadColor>): Pat
   });
   const raw = new Int16Array(pattern.cells.length);
   for (let i = 0; i < raw.length; i++) raw[i] = pattern.cells[i] === EMPTY ? EMPTY : target[pattern.cells[i]!]!;
-  return compact(pattern.width, pattern.height, raw, palette);
+  return fromIndices(pattern.width, pattern.height, raw, palette);
 }

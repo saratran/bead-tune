@@ -514,6 +514,8 @@ input[type="range"] {
   border-radius: 10px;
   display: flex;
   justify-content: center;
+  /* If the canvas is ever wider than the box, scroll instead of clipping its left side. */
+  justify-content: safe center;
 }
 
 .pattern-canvas {
@@ -802,4 +804,158 @@ input[type="range"] {
 
 .setting-row .hint {
   font-weight: 400;
+}
+
+/* Image option sections */
+.image-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.section > summary {
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.section > summary::after {
+  content: "▾";
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+
+.section:not([open]) > summary::after {
+  transform: rotate(-90deg);
+}
+
+.section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.field-label {
+  font-weight: 700;
+}
+
+.dot.big {
+  width: 18px;
+  height: 18px;
+}
+
+.row.link-btn,
+.btn.row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source img.picking {
+  cursor: crosshair;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Bead editor */
+.edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.pattern-canvas.editing {
+  touch-action: none; /* drag to paint instead of scrolling on touch screens */
+}
+
+.pattern-canvas.tool-paint,
+.pattern-canvas.tool-erase {
+  cursor: cell;
+}
+
+.pattern-canvas.tool-pick {
+  cursor: copy;
+}
+
+/* Touch screens: comfortable tap targets (~44px). */
+@media (pointer: coarse) {
+  .toggle {
+    min-height: 44px;
+  }
+
+  .toggle .track {
+    width: 44px;
+    height: 26px;
+  }
+
+  .toggle .track::after {
+    width: 22px;
+    height: 22px;
+  }
+
+  .toggle input:checked + .track::after {
+    transform: translateX(18px);
+  }
+
+  .segmented button {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+
+  .segmented.icons button {
+    min-width: 44px;
+  }
+
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .btn,
+  .link-btn {
+    min-height: 40px;
+  }
+
+  input[type="range"] {
+    height: 32px;
+  }
+
+  .section > summary {
+    min-height: 40px;
+  }
+
+  .slider {
+    grid-template-columns: 82px 1fr 40px;
+    min-height: 40px;
+  }
+}
+
+/* Narrow screens: give the pattern toolbar its own full-width row. */
+@media (max-width: 600px) {
+  .preview .card-head .actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .edit-bar .btn {
+    flex: 1 1 auto;
+  }
 }

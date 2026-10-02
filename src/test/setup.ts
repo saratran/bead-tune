@@ -5,12 +5,13 @@ GlobalRegistrator.register({ url: "http://localhost:3000/" });
 
 // Imported after registration so they see the DOM globals.
 const { cleanup } = await import("@testing-library/react");
-const { installCanvasMock } = await import("./canvas-mock");
+const { installCanvasMock, mockPixels } = await import("./canvas-mock");
 
 installCanvasMock();
 
 afterEach(() => {
   cleanup();
+  mockPixels(null);
   localStorage.clear();
   delete document.documentElement.dataset.theme;
 });

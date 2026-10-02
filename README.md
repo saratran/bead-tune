@@ -18,8 +18,15 @@ bun run build    # static site in dist/
 - Drop, pick or paste an image (or try the built-in sample)
 - Colour presets: MARD 221 (A–M, default), MARD 291, Perler — works for any bead size
 - Width in beads (presets 52 / 78 / 104) and adjustable pegboard size
-- Colour limit, dithering, background removal, "only colours I have"
+- Sampling: Smooth (photos), Sharp (crisp edges for drawings/logos) or Pixel art (detects the
+  grid of enlarged pixel art and reproduces it bead for bead); optional noise smoothing
+- Background removal with tolerance and a pick-from-image colour; auto-trim to the subject
+- Colour limit, minimum beads per colour, Standard (CIE76) or Accurate (CIEDE2000) matching,
+  diffusion or ordered dithering with strength, "only colours I have"
+- Clean-up: remove stray beads/small groups, one-bead outline in any colour
 - Brightness / contrast / saturation
+- Hand editing: paint, erase and pick colours bead by bead, with undo
+- Works on phones: fits narrow screens, touch-sized controls, drag-to-paint on touch
 - Bead shopping list; click a bead or colour to highlight, swap or remove colours
 - Display as squares (default), beads, crosses or dots, with optional colour codes
 - Export dialog with live preview: PNG or PDF, size L/M/S, cell shape, grid, analysis
@@ -35,9 +42,15 @@ bun run build    # static site in dist/
 
 ## How it works
 
-`src/lib/pattern.ts` — downscale → adjust → background flood-fill from the border →
-nearest bead colour in CIELAB → reduce to N colours by greedily merging the colour that is
-cheapest to repaint → optional Floyd–Steinberg dithering.
+`src/lib/pipeline.ts` runs the steps in order:
+
+1. `sampling.ts` — sample the image at 4× per bead, optionally median-filter, then average
+   (Smooth) or take each block's dominant colour (Sharp); or detect a pixel-art grid
+2. `pattern.ts` — adjust → flood-fill background from the border → match bead colours in
+   CIELAB → reduce to N colours by merging the cheapest-to-repaint colour → dithering →
+   drop colours below the minimum bead count
+3. `cleanup.ts` — trim (re-sampling just the subject), remove strays, add outline
+4. In the app: colour swaps, then hand edits
 
 ## Colour data
 

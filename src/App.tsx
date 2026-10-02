@@ -2,9 +2,13 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { BeadList } from "./components/BeadList";
 import { ColorPicker } from "./components/ColorPicker";
 import { Dropzone } from "./components/Dropzone";
-import { PatternView } from "./components/PatternView";
+import { DEFAULT_IMAGE_SETTINGS, ImageOptions, type ImageSettings } from "./components/ImageOptions";
+import { PatternView, type EditTool } from "./components/PatternView";
+import { applyEdits, type Edits } from "./lib/cleanup";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
-import { applySwaps, DEFAULT_ADJUSTMENTS, generatePattern, sampleImage, type Adjustments } from "./lib/pattern";
+import { applySwaps } from "./lib/pattern";
+import { buildPattern } from "./lib/pipeline";
+import { canvasSource } from "./lib/sampling";
 import { ExportDialog } from "./components/ExportDialog";
 import { ShapePicker } from "./components/ShapePicker";
 import { Toggle } from "./components/Toggle";
@@ -74,7 +78,14 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
-type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | null;
+type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | null;
+
+const MAX_UNDO = 50;
+
+/** Darkest colour in a palette — the natural default for outlines. */
+function darkest(colors: BeadColor[]): BeadColor {
+  return colors.reduce((a, b) => (b.lab[0] < a.lab[0] ? b : a));
+}
 
 export function App() {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -84,12 +95,11 @@ export function App() {
   const [brandId, setBrandId] = useState(DEFAULT_BRAND_ID);
   const [width, setWidth] = useState(WIDTH_PRESETS[0]!);
   const [boardInput, setBoardInput] = useState(26);
-  const [maxColors, setMaxColors] = useState(24);
-  const [dither, setDither] = useState(false);
-  const [removeBg, setRemoveBg] = useState(false);
+  const [imageSettings, setImageSettings] = useState<ImageSettings>(DEFAULT_IMAGE_SETTINGS);
+  const [outlineId, setOutlineId] = useState<string | null>(null);
+  const [pickingBg, setPickingBg] = useState(false);
   const [ownedOnly, setOwnedOnly] = useState(false);
   const [owned, setOwned] = useState(loadOwned);
-  const [adjust, setAdjust] = useState<Adjustments>(DEFAULT_ADJUSTMENTS);
   const [showBoards, setShowBoards] = useState(false);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [display, setDisplayState] = useState(() => loadStored(DISPLAY_KEY, DEFAULT_DISPLAY));
@@ -117,6 +127,12 @@ export function App() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
 
+  // Hand edits, keyed by cell index for a pattern of size `w` × `h`.
+  const [edits, setEdits] = useState<{ w: number; h: number; map: Edits }>({ w: 0, h: 0, map: new Map() });
+  const [undoStack, setUndoStack] = useState<Edits[]>([]);
+  const [tool, setTool] = useState<EditTool | null>(null);
+  const [brush, setBrush] = useState<BeadColor | null>(null);
+
   const brand = getBrand(brandId);
   const ownedSet = useMemo(() => new Set(owned[brand.source] ?? []), [owned, brand.source]);
 
@@ -126,7 +142,14 @@ export function App() {
     setHighlightId(null);
   }, []);
 
+  const clearHandEdits = useCallback(() => {
+    setEdits({ w: 0, h: 0, map: new Map() });
+    setUndoStack([]);
+  }, []);
+
   useEffect(resetEdits, [brandId, image, resetEdits]);
+  useEffect(clearHandEdits, [brandId, image, clearHandEdits]);
+  useEffect(() => setPickingBg(false), [image]);
 
   const onFile = useCallback(async (file: File) => {
     try {
@@ -146,20 +169,86 @@ export function App() {
     [brand, ownedOnly, ownedSet, excluded],
   );
 
+  const outlineColor = brand.colors.find((c) => c.id === outlineId) ?? darkest(brand.colors);
+  const source = useMemo(() => (image ? canvasSource(image) : null), [image]);
+
   // Defer the expensive inputs so sliders stay smooth while dragging.
   const dWidth = useDeferredValue(width);
-  const dAdjust = useDeferredValue(adjust);
-  const dMaxColors = useDeferredValue(maxColors);
+  const dSettings = useDeferredValue(imageSettings);
 
-  const sampled = useMemo(() => (image ? sampleImage(image, Math.max(2, Math.min(300, dWidth || 1))) : null), [image, dWidth]);
-  const basePattern = useMemo(
-    () =>
-      sampled
-        ? generatePattern(sampled, { palette, maxColors: dMaxColors, dither, removeBackground: removeBg, adjustments: dAdjust })
-        : null,
-    [sampled, palette, dMaxColors, dither, removeBg, dAdjust],
-  );
-  const pattern = useMemo(() => (basePattern ? applySwaps(basePattern, swaps) : null), [basePattern, swaps]);
+  const result = useMemo(() => {
+    if (!source) return null;
+    const { sampling, denoise, trim, cleanup, outline, ...options } = dSettings;
+    return buildPattern(source, {
+      width: Math.max(2, Math.min(300, dWidth || 1)),
+      sampling,
+      denoise,
+      trim,
+      cleanup,
+      outline: outline ? outlineColor : null,
+      options: { ...options, palette },
+    });
+  }, [source, dWidth, dSettings, palette, outlineColor]);
+
+  const swapped = useMemo(() => (result ? applySwaps(result.pattern, swaps) : null), [result, swaps]);
+
+  // Hand edits only make sense on a grid of the size they were made on.
+  const editsFit = swapped && edits.w === swapped.width && edits.h === swapped.height;
+  useEffect(() => {
+    if (swapped && !editsFit && edits.map.size > 0) clearHandEdits();
+  }, [swapped, editsFit, edits.map.size, clearHandEdits]);
+
+  const pattern = useMemo(() => (swapped && editsFit ? applyEdits(swapped, edits.map) : swapped), [swapped, editsFit, edits]);
+
+  const onEdit = (index: number, phase: "start" | "move") => {
+    if (!pattern) return;
+    if (tool === "pick") {
+      const idx = pattern.cells[index]!;
+      if (idx >= 0) {
+        setBrush(pattern.colors[idx]!);
+        setTool("paint");
+      }
+      return;
+    }
+    const value = tool === "erase" ? null : (brush ?? pattern.colors[0] ?? null);
+    if (tool === "paint" && !value) return;
+    if (phase === "start") {
+      // One undo step per stroke.
+      const snapshot = editsFit ? edits.map : new Map();
+      setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), snapshot]);
+    }
+    setEdits((prev) => {
+      const fits = prev.w === pattern.width && prev.h === pattern.height;
+      const map = new Map(fits ? prev.map : undefined);
+      map.set(index, value);
+      return { w: pattern.width, h: pattern.height, map };
+    });
+  };
+
+  const undo = () => {
+    const prev = undoStack[undoStack.length - 1];
+    if (!prev) return;
+    setUndoStack(undoStack.slice(0, -1));
+    setEdits((e) => ({ ...e, map: prev }));
+  };
+
+  /** Eyedropper on the source thumbnail: sample the clicked pixel as the background colour. */
+  const pickBackground = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!pickingBg || !source) return;
+    const img = e.currentTarget;
+    const rect = img.getBoundingClientRect();
+    // The thumbnail uses object-fit: contain, so account for letterboxing.
+    const scale = Math.min(rect.width / img.naturalWidth, rect.height / img.naturalHeight);
+    const ox = (rect.width - img.naturalWidth * scale) / 2;
+    const oy = (rect.height - img.naturalHeight * scale) / 2;
+    const native = source.native();
+    const fx = (e.clientX - rect.left - ox) / (img.naturalWidth * scale);
+    const fy = (e.clientY - rect.top - oy) / (img.naturalHeight * scale);
+    if (fx < 0 || fy < 0 || fx >= 1 || fy >= 1) return;
+    const i = (Math.floor(fy * native.height) * native.width + Math.floor(fx * native.width)) * 4;
+    setImageSettings({ ...imageSettings, bgColor: [native.data[i]!, native.data[i + 1]!, native.data[i + 2]!] });
+    setPickingBg(false);
+  };
 
   // Clamp so a blank or zero input can't break the board math.
   const boardSize = Math.max(5, Math.min(100, Math.round(boardInput) || 26));
@@ -190,7 +279,6 @@ export function App() {
     if (highlightId === c.id) setHighlightId(null);
   };
 
-  const setAdj = (key: keyof Adjustments, v: number) => setAdjust((a) => ({ ...a, [key]: v }));
   const edited = excluded.size > 0 || swaps.size > 0;
   const ownedEmpty = ownedOnly && ownedSet.size === 0;
 
@@ -220,7 +308,13 @@ export function App() {
         <aside className="card controls">
           {image ? (
             <div className="source">
-              <img src={image.src} alt="Source" />
+              <img
+                src={image.src}
+                alt="Source"
+                className={pickingBg ? "picking" : ""}
+                title={pickingBg ? "Click the background colour" : undefined}
+                onClick={pickBackground}
+              />
               <Dropzone onFile={onFile} compact />
             </div>
           ) : (
@@ -255,6 +349,7 @@ export function App() {
                 type="number"
                 min={2}
                 max={300}
+                disabled={imageSettings.sampling === "pixelart" && !!result?.pixelGrid && !result.pixelArtFallback}
                 value={width}
                 onChange={(e) => setWidth(Number(e.target.value))}
               />
@@ -288,16 +383,7 @@ export function App() {
             />
           </div>
 
-          <div className="field">
-            <label htmlFor="colors">
-              Colours <span className="muted">up to {maxColors}</span>
-            </label>
-            <input id="colors" type="range" min={2} max={60} value={maxColors} onChange={(e) => setMaxColors(Number(e.target.value))} />
-          </div>
-
           <div className="toggles">
-            <Toggle label="Blend colours (dithering)" checked={dither} onChange={setDither} />
-            <Toggle label="Remove background" checked={removeBg} onChange={setRemoveBg} />
             <div className="toggle-row">
               <Toggle label="Only colours I have" checked={ownedOnly} onChange={setOwnedOnly} />
               <button className="link-btn" onClick={() => setModal({ kind: "owned" })}>
@@ -307,15 +393,15 @@ export function App() {
             {ownedEmpty && <p className="hint warn">Choose the colours you own to use this option.</p>}
           </div>
 
-          <details className="adjust" open>
-            <summary>Adjust image</summary>
-            <Slider label="Brightness" value={adjust.brightness} onChange={(v) => setAdj("brightness", v)} />
-            <Slider label="Contrast" value={adjust.contrast} onChange={(v) => setAdj("contrast", v)} />
-            <Slider label="Saturation" value={adjust.saturation} onChange={(v) => setAdj("saturation", v)} />
-            <button className="btn btn-ghost" onClick={() => setAdjust(DEFAULT_ADJUSTMENTS)}>
-              Reset image
-            </button>
-          </details>
+          <ImageOptions
+            settings={imageSettings}
+            onChange={setImageSettings}
+            result={result}
+            outlineColor={outlineColor}
+            onChooseOutline={() => setModal({ kind: "outline" })}
+            pickingBackground={pickingBg}
+            onPickBackground={setPickingBg}
+          />
         </aside>
 
         <section className="preview-col">
@@ -326,11 +412,40 @@ export function App() {
                 <ShapePicker value={display.shape} onChange={(shape) => setDisplay({ ...display, shape })} />
                 <Toggle label="Codes" checked={display.codes} onChange={(codes) => setDisplay({ ...display, codes })} />
                 <Toggle label="Board lines" checked={showBoards} onChange={setShowBoards} />
+                <button
+                  className={`btn ${tool ? "btn-primary" : "btn-ghost"}`}
+                  aria-pressed={!!tool}
+                  disabled={!pattern}
+                  onClick={() => setTool(tool ? null : "paint")}
+                >
+                  {tool ? "Done editing" : "Edit beads"}
+                </button>
                 <button className="btn btn-primary" disabled={!pattern?.total} onClick={() => setExportOpen(true)}>
                   Export
                 </button>
               </div>
             </div>
+            {tool && pattern && (
+              <div className="edit-bar">
+                <div className="segmented" role="radiogroup" aria-label="Edit tool">
+                  {(["paint", "erase", "pick"] as const).map((t) => (
+                    <button key={t} role="radio" aria-checked={tool === t} className={tool === t ? "on" : ""} onClick={() => setTool(t)}>
+                      {{ paint: "Paint", erase: "Erase", pick: "Pick colour" }[t]}
+                    </button>
+                  ))}
+                </div>
+                <button className="btn btn-ghost row" onClick={() => setModal({ kind: "brush" })} title="Brush colour">
+                  <span className="dot big" style={{ background: (brush ?? pattern.colors[0])?.hex }} />
+                  {brush ? colorLabel(brush) : pattern.colors[0] ? colorLabel(pattern.colors[0]) : "Colour"}
+                </button>
+                <button className="btn btn-ghost" disabled={undoStack.length === 0} onClick={undo}>
+                  Undo
+                </button>
+                <button className="btn btn-ghost" disabled={!editsFit || edits.map.size === 0} onClick={clearHandEdits}>
+                  Clear edits
+                </button>
+              </div>
+            )}
             {pattern && pattern.total > 0 ? (
               <PatternView
                 pattern={pattern}
@@ -340,6 +455,8 @@ export function App() {
                 theme={theme}
                 shape={display.shape}
                 codes={display.codes}
+                tool={tool}
+                onEdit={onEdit}
                 onPickColor={setHighlightId}
               />
             ) : (
@@ -347,8 +464,15 @@ export function App() {
                 {ownedEmpty
                   ? "No colours selected — pick the beads you own."
                   : pattern
-                    ? "Everything was removed. Try turning off background removal."
+                    ? "Everything was removed. Try lowering the background tolerance or turning off background removal."
                     : "Your pattern appears here."}
+              </div>
+            )}
+            {editsFit && edits.map.size > 0 && (
+              <div className="edited">
+                <span>
+                  {edits.map.size} bead{edits.map.size === 1 ? "" : "s"} edited by hand
+                </span>
               </div>
             )}
             {edited && (
@@ -404,6 +528,33 @@ export function App() {
           onClose={() => setModal(null)}
         />
       )}
+      {modal?.kind === "outline" && (
+        <ColorPicker
+          mode="single"
+          title="Outline colour"
+          colors={brand.colors}
+          current={outlineColor.id}
+          onPick={(c) => {
+            setOutlineId(c.id);
+            setModal(null);
+          }}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === "brush" && (
+        <ColorPicker
+          mode="single"
+          title="Brush colour"
+          colors={brand.colors}
+          current={brush?.id}
+          onPick={(c) => {
+            setBrush(c);
+            setTool("paint");
+            setModal(null);
+          }}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal?.kind === "swap" && (
         <ColorPicker
           mode="single"
@@ -418,12 +569,3 @@ export function App() {
   );
 }
 
-function Slider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
-  return (
-    <div className="slider">
-      <span>{label}</span>
-      <input type="range" min={-100} max={100} value={value} onChange={(e) => onChange(Number(e.target.value))} />
-      <output>{value > 0 ? `+${value}` : value}</output>
-    </div>
-  );
-}

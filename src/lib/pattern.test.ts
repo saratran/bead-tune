@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BRANDS, type BeadColor } from "./palettes";
-import { applySwaps, DEFAULT_ADJUSTMENTS, generatePattern, sampleImage, type PatternOptions } from "./pattern";
+import { applySwaps, DEFAULT_ADJUSTMENTS, DEFAULT_PATTERN_OPTIONS, detectBackground, generatePattern, type PatternOptions } from "./pattern";
 
 type Px = [number, number, number, number];
 
@@ -18,7 +18,7 @@ function image(w: number, h: number, px: (x: number, y: number) => Px): ImageDat
   return { width: w, height: h, data, colorSpace: "srgb" } as ImageData;
 }
 
-const opts: PatternOptions = { palette, maxColors: 24, dither: false, removeBackground: false, adjustments: DEFAULT_ADJUSTMENTS };
+const opts: PatternOptions = { ...DEFAULT_PATTERN_OPTIONS, palette };
 const gradient = image(30, 30, (x, y) => [x * 8, y * 8, (x + y) * 4, 255]);
 const twoColours = () => image(2, 1, (x) => opaque(x === 0 ? white : black));
 
@@ -47,7 +47,7 @@ describe("generatePattern", () => {
   });
 
   test("dithering keeps every bead and the colour limit", () => {
-    const p = generatePattern(gradient, { ...opts, maxColors: 6, dither: true });
+    const p = generatePattern(gradient, { ...opts, maxColors: 6, dither: "diffusion" });
     expect(p.total).toBe(900);
     expect(p.colors.length).toBeLessThanOrEqual(6);
   });
@@ -61,7 +61,7 @@ describe("generatePattern", () => {
     ]);
     const twoBeads = [white, black];
     const flat = generatePattern(mid, { ...opts, palette: twoBeads });
-    const dithered = generatePattern(mid, { ...opts, palette: twoBeads, dither: true });
+    const dithered = generatePattern(mid, { ...opts, palette: twoBeads, dither: "diffusion" });
     expect(flat.colors.length).toBe(1);
     expect(dithered.colors.length).toBe(2);
   });
@@ -152,33 +152,103 @@ describe("applySwaps", () => {
   });
 });
 
-describe("sampleImage", () => {
-  const fakeImage = (width: number, height: number) => ({ width, height }) as HTMLImageElement;
 
-  test("keeps the aspect ratio", () => {
-    expect([sampleImage(fakeImage(1000, 500), 52).width, sampleImage(fakeImage(1000, 500), 52).height]).toEqual([52, 26]);
-    expect(sampleImage(fakeImage(300, 900), 52).height).toBe(156);
-  });
+describe("dithering modes", () => {
+  const mid = image(16, 16, () => [128, 128, 128, 255]);
+  const bw = { ...opts, palette: [white, black] };
 
-  test("never produces a zero-height image", () => {
-    expect(sampleImage(fakeImage(5000, 10), 52).height).toBe(1);
-  });
-
-  test("halves large images in steps before the final resize", () => {
-    const drawn: number[] = [];
-    const proto = HTMLCanvasElement.prototype as unknown as { getContext: (this: HTMLCanvasElement) => unknown };
-    const original = proto.getContext;
-    proto.getContext = function (this: HTMLCanvasElement) {
-      const ctx = original.call(this) as { drawImage: (...a: unknown[]) => void };
-      const canvas = this;
-      ctx.drawImage = () => drawn.push(canvas.width);
-      return ctx;
-    };
-    try {
-      sampleImage(fakeImage(1600, 1600), 50); // 1600 → 800 → 400 → 200 → 100 → 50
-      expect(drawn).toEqual([800, 400, 200, 100, 50]);
-    } finally {
-      proto.getContext = original;
+  test("ordered dithering mixes colours in a repeating 8×8 pattern", () => {
+    const p = generatePattern(mid, { ...bw, dither: "ordered", ditherStrength: 100 });
+    expect(p.colors.length).toBe(2);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        expect(p.cells[y * 16 + x]).toBe(p.cells[y * 16 + x + 8]!);
+        expect(p.cells[y * 16 + x]).toBe(p.cells[(y + 8) * 16 + x]!);
+      }
     }
+  });
+
+  test("strength 0 is the same as no dithering", () => {
+    const none = generatePattern(gradient, { ...opts, maxColors: 6 });
+    for (const dither of ["diffusion", "ordered"] as const) {
+      const off = generatePattern(gradient, { ...opts, maxColors: 6, dither, ditherStrength: 0 });
+      expect(Array.from(off.cells)).toEqual(Array.from(none.cells));
+    }
+  });
+
+  test("weaker ordered dithering mixes fewer pixels", () => {
+    // A grey just on the white side of the black/white midpoint.
+    const grey = image(16, 16, () => [150, 150, 150, 255]);
+    const blackCount = (strength: number) => {
+      const p = generatePattern(grey, { ...bw, dither: "ordered", ditherStrength: strength });
+      const i = p.colors.indexOf(black);
+      return i < 0 ? 0 : p.counts[i]!;
+    };
+    expect(blackCount(30)).toBe(0);
+    expect(blackCount(100)).toBeGreaterThan(0);
+    expect(blackCount(100)).toBeLessThan(256 / 2);
+  });
+});
+
+test("accurate matching maps chart colours to themselves too", () => {
+  const p = generatePattern(twoColours(), { ...opts, metric: "accurate" });
+  expect(p.colors.map((c) => c.id).sort()).toEqual([black.id, white.id].sort());
+  const g = generatePattern(gradient, { ...opts, metric: "accurate", maxColors: 8 });
+  expect(g.colors.length).toBeLessThanOrEqual(8);
+  expect(g.total).toBe(900);
+});
+
+describe("min beads per colour", () => {
+  // 300 red, 10 black, 5 white.
+  const img = image(35, 9, (x, y) => {
+    const i = y * 35 + x;
+    return opaque(i < 300 ? red : i < 310 ? black : white);
+  });
+
+  test("merges colours used by too few beads", () => {
+    expect(generatePattern(img, opts).colors.length).toBe(3);
+    const p = generatePattern(img, { ...opts, minBeads: 8 });
+    expect(p.colors.map((c) => c.id).sort()).toEqual([black.id, red.id].sort());
+    expect(p.total).toBe(315);
+  });
+
+  test("0 and 1 mean off", () => {
+    expect(generatePattern(img, { ...opts, minBeads: 1 }).colors.length).toBe(3);
+  });
+
+  test("always keeps at least one colour", () => {
+    const p = generatePattern(img, { ...opts, minBeads: 10_000 });
+    expect(p.colors).toEqual([red]);
+    expect(p.total).toBe(315);
+  });
+});
+
+describe("background options", () => {
+  // Outer ring white, second ring light grey, red centre.
+  const rings = image(5, 5, (x, y) => {
+    const d = Math.min(x, y, 4 - x, 4 - y);
+    return d === 0 ? [255, 255, 255, 255] : d === 1 ? [238, 238, 238, 255] : opaque(red);
+  });
+
+  test("tolerance controls how far from the background colour still counts", () => {
+    expect(generatePattern(rings, { ...opts, removeBackground: true, bgTolerance: 2 }).total).toBe(9);
+    expect(generatePattern(rings, { ...opts, removeBackground: true, bgTolerance: 14 }).total).toBe(1);
+  });
+
+  test("a picked background colour replaces the detected one", () => {
+    // Left column green, rest white, red centre.
+    const img = image(5, 5, (x, y) => (x === 0 ? [40, 160, 60, 255] : x === 2 && y === 2 ? opaque(red) : [255, 255, 255, 255]));
+    expect(generatePattern(img, { ...opts, removeBackground: true }).total).toBe(6);
+    expect(generatePattern(img, { ...opts, removeBackground: true, bgColor: [40, 160, 60] }).total).toBe(20);
+  });
+
+  test("detectBackground finds the main border colour", () => {
+    expect(detectBackground(rings)).toEqual([255, 255, 255]);
+    expect(detectBackground(image(3, 3, () => [0, 0, 0, 0]))).toBeNull();
+  });
+
+  test("detectBackground applies the same adjustments as matching", () => {
+    const [r] = detectBackground(image(3, 3, () => [100, 100, 100, 255]), { ...DEFAULT_ADJUSTMENTS, brightness: 40 })!;
+    expect(r).toBeGreaterThan(100);
   });
 });
