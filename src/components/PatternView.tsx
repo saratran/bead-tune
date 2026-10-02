@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Pattern } from "../lib/pattern";
+import { colorLabel } from "../lib/palettes";
 import { drawPattern } from "../lib/render";
 
 interface Props {
@@ -87,7 +88,7 @@ export function PatternView({ pattern, boardSize, showBoards, highlightId, onPic
               <>
                 {" · "}
                 <span className="dot" style={{ background: hoverColor.hex }} />
-                {hoverColor.code} {hoverColor.name}
+                {colorLabel(hoverColor)}
               </>
             ) : (
               " · empty peg"

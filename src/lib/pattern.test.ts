@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { BRANDS } from "./palettes";
 import { applySwaps, DEFAULT_ADJUSTMENTS, generatePattern } from "./pattern";
 
-const palette = BRANDS[0]!.colors.filter((c) => c.kind === "solid");
+const palette = BRANDS.find((b) => b.id === "perler")!.colors;
+const white = palette.find((c) => c.name === "White")!;
+const black = palette.find((c) => c.name === "Black")!;
+const twoColours = () => image(2, 1, (x) => [...(x === 0 ? white : black).rgb, 255] as [number, number, number, number]);
 
 function image(w: number, h: number, px: (x: number, y: number) => [number, number, number, number]): ImageData {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -12,9 +15,9 @@ function image(w: number, h: number, px: (x: number, y: number) => [number, numb
 
 const opts = { palette, maxColors: 24, dither: false, removeBackground: false, adjustments: DEFAULT_ADJUSTMENTS };
 
-test("maps pure colours to the closest bead", () => {
-  const p = generatePattern(image(2, 1, (x) => (x === 0 ? [255, 255, 255, 255] : [20, 20, 20, 255])), opts);
-  expect(p.colors.map((c) => c.name).sort()).toEqual(["Black", "White"]);
+test("maps chart colours to themselves", () => {
+  const p = generatePattern(twoColours(), opts);
+  expect(p.colors.map((c) => c.id).sort()).toEqual([black.id, white.id].sort());
   expect(p.total).toBe(2);
 });
 
@@ -34,10 +37,15 @@ test("transparent pixels and background are left empty", () => {
 });
 
 test("swaps merge colours", () => {
-  const p = generatePattern(image(2, 1, (x) => (x === 0 ? [255, 255, 255, 255] : [20, 20, 20, 255])), opts);
-  const white = p.colors.find((c) => c.name === "White")!;
-  const black = p.colors.find((c) => c.name === "Black")!;
+  const p = generatePattern(twoColours(), opts);
   const swapped = applySwaps(p, new Map([[white.id, black]]));
   expect(swapped.colors).toEqual([black]);
   expect(swapped.counts).toEqual([2]);
+});
+
+test("MARD default preset is the A–M series", () => {
+  const mard221 = BRANDS.find((b) => b.id === "mard-221")!;
+  expect(mard221.colors.length).toBe(221);
+  expect(mard221.colors.every((c) => /^[A-M]\d+$/.test(c.code))).toBe(true);
+  expect(BRANDS.find((b) => b.id === "mard-291")!.colors.length).toBe(291);
 });

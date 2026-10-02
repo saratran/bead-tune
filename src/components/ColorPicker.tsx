@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BeadColor } from "../lib/palettes";
+import { colorLabel, type BeadColor } from "../lib/palettes";
 
 interface BaseProps {
   title: string;
@@ -69,10 +69,10 @@ export function ColorPicker(props: Props) {
         </div>
         <div className="swatch-grid">
           {shown.map((c) => (
-            <button key={c.id} className={`swatch-btn ${isOn(c) ? "on" : ""}`} onClick={() => toggle(c)} title={`${c.code} ${c.name}`}>
+            <button key={c.id} className={`swatch-btn ${isOn(c) ? "on" : ""}`} onClick={() => toggle(c)} title={colorLabel(c)}>
               <span className="swatch" style={{ background: c.hex }} />
               <span className="swatch-label">
-                <b>{c.code}</b> {c.name}
+                <b>{c.code}</b>{c.name && ` ${c.name}`}
               </span>
             </button>
           ))}

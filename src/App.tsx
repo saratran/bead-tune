@@ -3,11 +3,12 @@ import { BeadList } from "./components/BeadList";
 import { ColorPicker } from "./components/ColorPicker";
 import { Dropzone } from "./components/Dropzone";
 import { PatternView } from "./components/PatternView";
-import { BRANDS, getBrand, type BeadColor } from "./lib/palettes";
+import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
 import { applySwaps, DEFAULT_ADJUSTMENTS, generatePattern, sampleImage, type Adjustments } from "./lib/pattern";
 import { exportPng } from "./lib/render";
 import { makeSampleImage } from "./lib/sample";
 
+const WIDTH_PRESETS = [52, 78, 104];
 const OWNED_KEY = "bead-pattern:owned";
 const THEME_KEY = "bead-pattern:theme";
 
@@ -52,12 +53,12 @@ export function App() {
   const [fileName, setFileName] = useState("pattern");
   const [error, setError] = useState<string | null>(null);
 
-  const [brandId, setBrandId] = useState(BRANDS[0]!.id);
-  const [width, setWidth] = useState(29);
+  const [brandId, setBrandId] = useState(DEFAULT_BRAND_ID);
+  const [width, setWidth] = useState(WIDTH_PRESETS[0]!);
+  const [boardInput, setBoardInput] = useState(26);
   const [maxColors, setMaxColors] = useState(24);
   const [dither, setDither] = useState(false);
   const [removeBg, setRemoveBg] = useState(false);
-  const [allowSpecial, setAllowSpecial] = useState(false);
   const [ownedOnly, setOwnedOnly] = useState(false);
   const [owned, setOwned] = useState(loadOwned);
   const [adjust, setAdjust] = useState<Adjustments>(DEFAULT_ADJUSTMENTS);
@@ -78,7 +79,7 @@ export function App() {
   const [modal, setModal] = useState<Modal>(null);
 
   const brand = getBrand(brandId);
-  const ownedSet = useMemo(() => new Set(owned[brandId] ?? []), [owned, brandId]);
+  const ownedSet = useMemo(() => new Set(owned[brand.source] ?? []), [owned, brand.source]);
 
   const resetEdits = useCallback(() => {
     setExcluded(new Set());
@@ -101,9 +102,9 @@ export function App() {
   const palette = useMemo(
     () =>
       brand.colors.filter(
-        (c) => (allowSpecial || c.kind === "solid") && (!ownedOnly || ownedSet.has(c.id)) && !excluded.has(c.id),
+        (c) => (!ownedOnly || ownedSet.has(c.id)) && !excluded.has(c.id),
       ),
-    [brand, allowSpecial, ownedOnly, ownedSet, excluded],
+    [brand, ownedOnly, ownedSet, excluded],
   );
 
   // Defer the expensive inputs so sliders stay smooth while dragging.
@@ -121,7 +122,8 @@ export function App() {
   );
   const pattern = useMemo(() => (basePattern ? applySwaps(basePattern, swaps) : null), [basePattern, swaps]);
 
-  const boardSize = brand.boardSize;
+  // Clamp so a blank or zero input can't break the board math.
+  const boardSize = Math.max(5, Math.min(100, Math.round(boardInput) || 26));
   const boardsX = pattern ? Math.ceil(pattern.width / boardSize) : 0;
   const boardsY = pattern ? Math.ceil(pattern.height / boardSize) : 0;
 
@@ -197,7 +199,7 @@ export function App() {
             <select id="brand" className="input" value={brandId} onChange={(e) => setBrandId(e.target.value)}>
               {BRANDS.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.name} ({b.colors.length} colours)
+                  {b.name}
                 </option>
               ))}
             </select>
@@ -218,9 +220,9 @@ export function App() {
                 onChange={(e) => setWidth(Number(e.target.value))}
               />
               <div className="segmented">
-                {[1, 2, 3, 4].map((n) => (
-                  <button key={n} className={width === n * boardSize ? "on" : ""} onClick={() => setWidth(n * boardSize)}>
-                    {n} board{n > 1 ? "s" : ""}
+                {WIDTH_PRESETS.map((n) => (
+                  <button key={n} className={width === n ? "on" : ""} onClick={() => setWidth(n)}>
+                    {n}
                   </button>
                 ))}
               </div>
@@ -233,6 +235,21 @@ export function App() {
           </div>
 
           <div className="field">
+            <label htmlFor="board">
+              Pegboard size <span className="muted">pegs per side</span>
+            </label>
+            <input
+              id="board"
+              className="input num"
+              type="number"
+              min={5}
+              max={100}
+              value={boardInput}
+              onChange={(e) => setBoardInput(Number(e.target.value))}
+            />
+          </div>
+
+          <div className="field">
             <label htmlFor="colors">
               Colours <span className="muted">up to {maxColors}</span>
             </label>
@@ -242,7 +259,6 @@ export function App() {
           <div className="toggles">
             <Toggle label="Blend colours (dithering)" checked={dither} onChange={setDither} />
             <Toggle label="Remove background" checked={removeBg} onChange={setRemoveBg} />
-            <Toggle label="Allow clear, glitter and neon beads" checked={allowSpecial} onChange={setAllowSpecial} />
             <div className="toggle-row">
               <Toggle label="Only colours I have" checked={ownedOnly} onChange={setOwnedOnly} />
               <button className="link-btn" onClick={() => setModal({ kind: "owned" })}>
@@ -333,7 +349,7 @@ export function App() {
       </main>
 
       <footer className="footer muted small">
-        Bead colours are approximate — check your brand's official chart. Images are processed locally and never uploaded.
+        Colours on screen are approximate — check against your actual beads. Colour data from maxcleme/beadcolors (MIT). Images are processed locally and never uploaded.
       </footer>
 
       {modal?.kind === "owned" && (
@@ -343,7 +359,7 @@ export function App() {
           colors={brand.colors}
           selected={ownedSet}
           onChange={(s) => {
-            const next = { ...owned, [brandId]: [...s] };
+            const next = { ...owned, [brand.source]: [...s] };
             setOwned(next);
             saveOwned(next);
           }}
@@ -353,7 +369,7 @@ export function App() {
       {modal?.kind === "swap" && (
         <ColorPicker
           mode="single"
-          title={`Swap ${modal.from.code} ${modal.from.name} for…`}
+          title={`Swap ${colorLabel(modal.from)} for…`}
           colors={brand.colors}
           current={modal.from.id}
           onPick={(to) => swapColor(modal.from, to)}

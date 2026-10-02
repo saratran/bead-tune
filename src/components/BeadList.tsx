@@ -35,8 +35,7 @@ export function BeadList({ pattern, highlightId, onHighlight, onSwap, onRemove, 
                     {symbolFor(i)}
                   </span>
                   <span className="bead-name">
-                    <b>{c.code}</b> {c.name}
-                    {c.kind !== "solid" && <em className="kind">{c.kind}</em>}
+                    <b>{c.code}</b>{c.name && ` ${c.name}`}
                   </span>
                   <span className="bead-count">{pattern.counts[i]!.toLocaleString()}</span>
                 </button>
