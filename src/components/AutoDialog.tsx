@@ -166,6 +166,82 @@ function Chips<T>({
   );
 }
 
+export type ResultSort = "suggested" | "features" | "likeness" | "ease" | "colors-asc" | "colors-desc" | "beads" | "strays";
+export type BookmarkSort = "newest" | "oldest" | "features" | "likeness" | "ease" | "colors-asc" | "colors-desc" | "name";
+
+const RESULT_SORTS: [ResultSort, string][] = [
+  ["suggested", "Suggested order"],
+  ["features", "Features (best first)"],
+  ["likeness", "Likeness (best first)"],
+  ["ease", "Ease (easiest first)"],
+  ["colors-asc", "Fewest colours"],
+  ["colors-desc", "Most colours"],
+  ["beads", "Fewest beads"],
+  ["strays", "Fewest stray beads"],
+];
+const BOOKMARK_SORTS: [BookmarkSort, string][] = [
+  ["newest", "Newest first"],
+  ["oldest", "Oldest first"],
+  ["features", "Features (best first)"],
+  ["likeness", "Likeness (best first)"],
+  ["ease", "Ease (easiest first)"],
+  ["colors-asc", "Fewest colours"],
+  ["colors-desc", "Most colours"],
+  ["name", "Name (A–Z)"],
+];
+
+/** Sorted copy (stable: ties keep their original order). */
+export function sortResults<T extends { features: number; likeness: number; ease: number; metrics: { colors: number; beads: number; strays: number } }>(list: T[], sort: ResultSort): T[] {
+  const key: Record<ResultSort, ((s: T) => number) | null> = {
+    suggested: null,
+    features: (s) => -s.features,
+    likeness: (s) => -s.likeness,
+    ease: (s) => -s.ease,
+    "colors-asc": (s) => s.metrics.colors,
+    "colors-desc": (s) => -s.metrics.colors,
+    beads: (s) => s.metrics.beads,
+    strays: (s) => s.metrics.strays,
+  };
+  const k = key[sort];
+  return k ? [...list].sort((a, b) => k(a) - k(b)) : [...list];
+}
+
+export function sortBookmarks(list: Bookmark[], sort: BookmarkSort): Bookmark[] {
+  const out = [...list];
+  switch (sort) {
+    case "newest":
+      return out.sort((a, b) => b.createdAt - a.createdAt);
+    case "oldest":
+      return out.sort((a, b) => a.createdAt - b.createdAt);
+    case "features":
+      return out.sort((a, b) => (b.features ?? -1) - (a.features ?? -1));
+    case "likeness":
+      return out.sort((a, b) => b.likeness - a.likeness);
+    case "ease":
+      return out.sort((a, b) => b.ease - a.ease);
+    case "colors-asc":
+      return out.sort((a, b) => a.colors - b.colors);
+    case "colors-desc":
+      return out.sort((a, b) => b.colors - a.colors);
+    case "name":
+      return out.sort((a, b) => a.label.localeCompare(b.label));
+  }
+}
+
+function loadSort<T extends string>(key: string, fallback: T): T {
+  try {
+    return (localStorage.getItem(key) as T | null) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveSort(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
 /** "Prefer" checkbox. A top-level component so it isn't remounted on every render (keeps focus). */
 function PreferBox({ label, checked, onToggle }: { label: string; checked: boolean; onToggle: () => void }) {
   return (
@@ -208,6 +284,19 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   // Which list is open in the large viewer, and where.
   const [viewing, setViewing] = useState<{ from: "results" | "bookmarks"; index: number } | null>(null);
+  const [resultSort, setResultSortState] = useState<ResultSort>(() => loadSort("bead-pattern:sort-results", "suggested"));
+  const [bookmarkSort, setBookmarkSortState] = useState<BookmarkSort>(() => loadSort("bead-pattern:sort-bookmarks", "newest"));
+  const setResultSort = (v: ResultSort) => {
+    setResultSortState(v);
+    saveSort("bead-pattern:sort-results", v);
+  };
+  const setBookmarkSort = (v: BookmarkSort) => {
+    setBookmarkSortState(v);
+    saveSort("bead-pattern:sort-bookmarks", v);
+  };
+  // What's shown, in order: results grouped by tone and sorted within each group.
+  const shownResults = TONES.flatMap((t) => sortResults((results ?? []).filter((r) => (r.tone ?? "natural") === t), resultSort));
+  const shownBookmarks = sortBookmarks(bookmarks, bookmarkSort);
   const [showSpace, setShowSpace] = useState(!results);
   const abort = useRef<AbortController | null>(null);
 
@@ -338,7 +427,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
   const bookmarkPatterns = useRef(new Map<string, ViewerItem["pattern"]>());
   const viewerItems = (from: "results" | "bookmarks"): ViewerItem[] =>
     from === "results"
-      ? (results ?? []).map((s, i) => ({
+      ? shownResults.map((s, i) => ({
           key: `r${i}-${JSON.stringify(s.candidate)}`,
           label: s.label,
           tone: s.tone,
@@ -347,7 +436,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
           settings: describeCandidate(s.candidate),
           bookmarked: !!bookmarkOf(s.candidate),
         }))
-      : [...bookmarks].reverse().map((b) => {
+      : shownBookmarks.map((b) => {
           let pattern = bookmarkPatterns.current.get(b.id);
           if (!pattern) {
             pattern = buildPattern(source, candidateSettings(base, b.candidate)).pattern;
@@ -593,11 +682,22 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
 
           {bookmarks.length > 0 && (
             <section className="auto-bookmarks" aria-label="Bookmarks">
-              <h4>★ Bookmarks ({bookmarks.length})</h4>
+              <div className="list-head">
+                <h4>★ Bookmarks ({bookmarks.length})</h4>
+                {bookmarks.length > 1 && (
+                  <select className="input sort-select" aria-label="Sort bookmarks" value={bookmarkSort} onChange={(e) => setBookmarkSort(e.target.value as BookmarkSort)}>
+                    {BOOKMARK_SORTS.map(([v, label]) => (
+                      <option key={v} value={v}>
+                        Sort: {label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <ul>
-                {[...bookmarks].reverse().map((b) => (
+                {shownBookmarks.map((b) => (
                   <li key={b.id} className="auto-card bookmark">
-                    <button className="thumb-btn" aria-label={`View ${b.label} larger`} title="View larger" onClick={() => setViewing({ from: "bookmarks", index: [...bookmarks].reverse().indexOf(b) })}>
+                    <button className="thumb-btn" aria-label={`View ${b.label} larger`} title="View larger" onClick={() => setViewing({ from: "bookmarks", index: shownBookmarks.indexOf(b) })}>
                       <img className="auto-thumb" src={b.thumbnail} alt="" />
                     </button>
                     <div className="auto-card-info">
@@ -636,20 +736,31 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
 
           {results && !progress && (
             <div className="auto-results">
-              <h4>{results.length && results.every((r) => r.label.startsWith("Tuned:")) ? "Based on your picks" : "Suggestions"}</h4>
+              <div className="list-head">
+                <h4>{results.length && results.every((r) => r.label.startsWith("Tuned:")) ? "Based on your picks" : "Suggestions"}</h4>
+                {results.length > 1 && (
+                  <select className="input sort-select" aria-label="Sort suggestions" value={resultSort} onChange={(e) => setResultSort(e.target.value as ResultSort)}>
+                    {RESULT_SORTS.map(([v, label]) => (
+                      <option key={v} value={v}>
+                        Sort: {label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <p className="hint">
                 Scores compare the suggestions with each other: features (outlines and fine details kept), likeness (overall colour) and ease (fewer colours and stray beads).
               </p>
               {(() => {
                 // Group by colour tone; headings only when there's more than one.
-                const groups = TONES.map((t) => [t, results.filter((r) => (r.tone ?? "natural") === t)] as const).filter(([, g]) => g.length > 0);
+                const groups = TONES.map((t) => [t, shownResults.filter((r) => (r.tone ?? "natural") === t)] as const).filter(([, g]) => g.length > 0);
                 return groups.map(([tone, group]) => (
                   <section key={tone} className="tone-group" aria-label={`${TONE_LABEL[tone]} suggestions`}>
                     {groups.length > 1 && <h5 className="tone-heading">{TONE_LABEL[tone]}</h5>}
                     <ul>
                       {group.map((s, i) => (
                   <li key={i} className="auto-card">
-                    <button className="thumb-btn" aria-label={`View ${s.label} larger`} title="View larger" onClick={() => setViewing({ from: "results", index: results.indexOf(s) })}>
+                    <button className="thumb-btn" aria-label={`View ${s.label} larger`} title="View larger" onClick={() => setViewing({ from: "results", index: shownResults.indexOf(s) })}>
                       <Thumbnail s={s} />
                     </button>
                     <div className="auto-card-info">
@@ -706,7 +817,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
             if (!items.length) return null;
             const index = Math.min(viewing.index, items.length - 1);
             const sourceOf = (item: ViewerItem) =>
-              viewing.from === "results" ? results![items.indexOf(item)]! : [...bookmarks].reverse()[items.indexOf(item)]!;
+              viewing.from === "results" ? shownResults[items.indexOf(item)]! : shownBookmarks[items.indexOf(item)]!;
             return (
               <SuggestionViewer
                 items={items}
@@ -719,7 +830,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
                 }}
                 onToggleBookmark={
                   viewing.from === "results"
-                    ? (item) => toggleBookmark(results![items.indexOf(item)]!)
+                    ? (item) => toggleBookmark(shownResults[items.indexOf(item)]!)
                     : undefined
                 }
                 onClose={() => setViewing(null)}

@@ -20,7 +20,7 @@ import type { PipelineSettings } from "../lib/pipeline";
 import { FULL_CROP, imageDataSource, makeImageData } from "../lib/sampling";
 import { mockPixels } from "../test/canvas-mock";
 import { mard } from "../test/fixtures";
-import { AutoDialog, describeCandidate, describeChanges } from "./AutoDialog";
+import { AutoDialog, describeCandidate, describeChanges, sortBookmarks, sortResults } from "./AutoDialog";
 
 // Red disc on a blue gradient.
 const img = makeImageData(48, 48);
@@ -563,4 +563,63 @@ describe("viewing a result large", () => {
     expect(within(v).getByText(/^12 × 12 · \d+ colours · 144 beads$/)).toBeTruthy();
     expect(within(v).queryByLabelText(/Bookmark/) === null).toBe(true); // already a bookmark
   });
+});
+
+describe("sorting", () => {
+  const m = (colors: number, beads: number, strays: number) => ({ colorError: 1, detailError: 1, distanceError: 1, edgeError: 0, featureLoss: 0, noise: 0, toneError: 0, colors, beads, strays, fragmentation: 1 });
+  const items = [
+    { id: "a", features: 60, likeness: 90, ease: 20, metrics: m(40, 300, 9) },
+    { id: "b", features: 90, likeness: 70, ease: 50, metrics: m(12, 200, 1) },
+    { id: "c", features: 75, likeness: 80, ease: 90, metrics: m(24, 250, 5) },
+  ];
+  const order = (sort: Parameters<typeof sortResults>[1]) => sortResults(items, sort).map((i) => i.id).join("");
+
+  test("results sort by each option; suggested keeps the order", () => {
+    expect(order("suggested")).toBe("abc");
+    expect(order("features")).toBe("bca");
+    expect(order("likeness")).toBe("acb");
+    expect(order("ease")).toBe("cba");
+    expect(order("colors-asc")).toBe("bca");
+    expect(order("colors-desc")).toBe("acb");
+    expect(order("beads")).toBe("bca");
+    expect(order("strays")).toBe("bca");
+  });
+
+  test("ties keep their original order", () => {
+    const tied = [items[0]!, { ...items[1]!, id: "d", features: 60 }];
+    expect(sortResults(tied, "features").map((i) => i.id)).toEqual(["a", "d"]);
+  });
+
+  test("bookmarks sort by date, scores, colours and name", () => {
+    const bm = (label: string, createdAt: number, likeness: number, colors: number) => ({ id: label, label, candidate: {} as never, thumbnail: "", likeness, ease: 50, colors, beads: 1, strays: 0, createdAt, context: { width: 1, brandId: "" } });
+    const list = [bm("Crisp", 2, 70, 30), bm("Balanced", 3, 80, 20), bm("Alpha", 1, 90, 10)];
+    const names = (sort: Parameters<typeof sortBookmarks>[1]) => sortBookmarks(list, sort).map((b) => b.label);
+    expect(names("newest")).toEqual(["Balanced", "Crisp", "Alpha"]);
+    expect(names("oldest")).toEqual(["Alpha", "Crisp", "Balanced"]);
+    expect(names("likeness")).toEqual(["Alpha", "Balanced", "Crisp"]);
+    expect(names("colors-desc")).toEqual(["Crisp", "Balanced", "Alpha"]);
+    expect(names("name")).toEqual(["Alpha", "Balanced", "Crisp"]);
+  });
+
+  test("the list and the viewer follow the chosen sort, which is remembered", async () => {
+    const r = renderDialog();
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "builtin:quick" } });
+    fireEvent.click(screen.getByText("Find suggestions"));
+    await waitFor(() => expect(r.onResults).toHaveBeenCalled(), { timeout: 10000 });
+    const list = r.onResults.mock.lastCall![0];
+    r.rerender(<AutoDialog source={source} base={base} results={list} onResults={r.onResults} onApply={r.onApply} bookmarks={[]} onBookmarksChange={mock()} onClose={r.onClose} />);
+    if (list.length < 2) return;
+    fireEvent.change(screen.getByLabelText("Sort suggestions"), { target: { value: "colors-asc" } });
+    const shown = [...document.querySelectorAll(".auto-results .auto-card .small")].filter((e) => /colours · /.test(e.textContent!)).map((e) => Number(e.textContent!.split(" ")[0]));
+    expect(shown).toEqual([...shown].sort((a, b) => a - b));
+
+    const firstLabel = document.querySelector(".auto-results .auto-card strong")!.textContent!;
+    fireEvent.click(document.querySelector(".auto-results .thumb-btn")!);
+    expect(screen.getByRole("dialog", { name: `View ${firstLabel}` })).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    r.unmount();
+    renderDialog({ results: list });
+    expect((screen.getByLabelText("Sort suggestions") as HTMLSelectElement).value).toBe("colors-asc");
+  }, 30000);
 });

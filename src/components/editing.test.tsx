@@ -246,6 +246,12 @@ describe("App with an image", () => {
     await act(async () => {
       fireEvent.click(screen.getByText("78"));
     });
+    // Changing the size with hand edits asks first.
+    const prompt = screen.getByRole("alertdialog", { name: "Hand edits may be lost" });
+    expect(prompt.textContent).toContain("You've edited 1 bead by hand");
+    await act(async () => {
+      fireEvent.click(within(prompt).getByText("Change anyway"));
+    });
     await waitFor(() => expect(screen.queryByText(/edited by hand/)).toBeNull());
     expect(pill()).toBe("6,084 beads · 2 colours");
   });
@@ -272,5 +278,163 @@ describe("App with an image", () => {
     fireEvent.click(thumb, { clientX: 40, clientY: 40 });
     await waitFor(() => expect(screen.getByText("Auto")).toBeTruthy());
     expect(thumb.className).toBe("");
+  });
+});
+
+describe("outline follows hand edits", () => {
+  const redSquare = (w: number, h: number) => {
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const inside = x >= w / 4 && x < (3 * w) / 4 && y >= h / 4 && y < (3 * h) / 4;
+      data.set(inside ? [200, 30, 40, 255] : [255, 255, 255, 255], (y * w + x) * 4);
+    }
+    return data;
+  };
+  const darkest = mard.reduce((a, b) => (b.lab[0] < a.lab[0] ? b : a));
+  const cellPx = 600 / 52;
+  const at = (x: number, y: number) => ({ clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });
+  const canvas = () => document.querySelector(".pattern-canvas")!;
+  /** The colour code under a cell, via the hover status line. */
+  const codeAt = (x: number, y: number) => {
+    fireEvent.mouseMove(canvas(), at(x, y));
+    const text = document.querySelector(".pattern-status")!.textContent!;
+    return text.includes("empty peg") ? null : text.split(" · ")[1]!.trim();
+  };
+  const outlineCount = () => {
+    const row = screen.getAllByRole("listitem").find((li) => li.querySelector(".bead-name b")?.textContent === darkest.code);
+    return row ? Number(row.querySelector(".bead-count")!.textContent!.replace(/,/g, "")) : 0;
+  };
+  const stroke = (x: number, y: number) => {
+    fireEvent.pointerDown(canvas(), at(x, y));
+    fireEvent.pointerUp(canvas(), at(x, y));
+  };
+
+  async function setup() {
+    mockPixels(redSquare);
+    render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(document.querySelector(".pattern-canvas")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Remove background"));
+    fireEvent.click(screen.getByLabelText("Outline"));
+    await waitFor(() => expect(outlineCount()).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("Edit beads"));
+  }
+
+  test("a bead painted outside the shape gets its own outline", async () => {
+    await setup();
+    const before = outlineCount();
+    fireEvent.click(screen.getByRole("radio", { name: "Pick colour" }));
+    stroke(26, 26); // pick the red
+    stroke(4, 4); // paint far outside the shape
+    await waitFor(() => expect(outlineCount()).toBe(before + 8));
+    expect(codeAt(3, 3)).toBe(darkest.code);
+  });
+
+  test("an erased bead inside the shape stays empty (not filled with outline)", async () => {
+    await setup();
+    const before = outlineCount();
+    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
+    stroke(26, 26);
+    await waitFor(() => expect(codeAt(26, 26)).toBeNull());
+    expect(outlineCount()).toBe(before);
+  });
+
+  test("outline beads can be erased or recoloured by hand, and undo puts them back", async () => {
+    await setup();
+    // Find an outline bead along row 26.
+    let x = 0;
+    while (x < 52 && codeAt(x, 26) !== darkest.code) x++;
+    expect(x).toBeLessThan(52);
+    const before = outlineCount();
+    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
+    stroke(x, 26);
+    await waitFor(() => expect(codeAt(x, 26)).toBeNull());
+    expect(outlineCount()).toBe(before - 1);
+    expect(screen.getByText("1 bead edited by hand")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Undo"));
+    await waitFor(() => expect(codeAt(x, 26)).toBe(darkest.code));
+  });
+
+  test("the edit bar's Outline switch is the same setting as the sidebar's", async () => {
+    await setup();
+    const bar = document.querySelector(".edit-bar") as HTMLElement;
+    const barToggle = within(bar).getByLabelText("Outline") as HTMLInputElement;
+    expect(barToggle.checked).toBe(true);
+    fireEvent.click(barToggle);
+    await waitFor(() => expect(outlineCount()).toBe(0));
+    const sidebarToggle = screen.getAllByLabelText("Outline").find((el) => !bar.contains(el)) as HTMLInputElement;
+    expect(sidebarToggle.checked).toBe(false);
+  });
+});
+
+describe("warning before settings change hand edits", () => {
+  const solid = (w: number, h: number) => {
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) data.set([200, 30, 40, 255], i * 4);
+    return data;
+  };
+  const prompt = () => screen.queryByRole("alertdialog", { name: "Hand edits may be lost" });
+  const cellPx = 600 / 52;
+  const erase = (x: number, y: number) => {
+    const c = document.querySelector(".pattern-canvas")!;
+    fireEvent.pointerDown(c, { clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });
+    fireEvent.pointerUp(c, { clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });
+  };
+
+  async function withEdit() {
+    mockPixels(solid);
+    render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(document.querySelector(".pattern-canvas")).toBeTruthy());
+    fireEvent.click(screen.getByText("Edit beads"));
+    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
+    erase(3, 3);
+    await waitFor(() => expect(screen.getByText("1 bead edited by hand")).toBeTruthy());
+  }
+
+  test("no warning without hand edits", async () => {
+    mockPixels(solid);
+    render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(document.querySelector(".pattern-canvas")).toBeTruthy());
+    fireEvent.click(screen.getByRole("radio", { name: "Sharp" }));
+    expect(prompt() === null).toBe(true);
+    expect(screen.getByRole("radio", { name: "Sharp" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("Cancel leaves the setting as it was", async () => {
+    await withEdit();
+    fireEvent.click(screen.getByRole("radio", { name: "Sharp" }));
+    fireEvent.click(within(prompt()!).getByText("Cancel"));
+    expect(screen.getByRole("radio", { name: "Smooth" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("1 bead edited by hand")).toBeTruthy();
+  });
+
+  test("Clear edits and change", async () => {
+    await withEdit();
+    fireEvent.click(screen.getByText("78"));
+    fireEvent.click(within(prompt()!).getByText("Clear edits and change"));
+    await waitFor(() => expect(screen.queryByText(/edited by hand/) === null).toBe(true));
+    expect(screen.getByText("78").className).toBe("on");
+  });
+
+  test("Change anyway isn't asked again until the next stroke", async () => {
+    await withEdit();
+    fireEvent.click(screen.getByRole("radio", { name: "Sharp" }));
+    fireEvent.click(within(prompt()!).getByText("Change anyway"));
+    fireEvent.click(screen.getByRole("radio", { name: "Smooth" }));
+    expect(prompt() === null).toBe(true); // acknowledged
+    erase(5, 5); // a new stroke…
+    await waitFor(() => expect(screen.getByText("2 beads edited by hand")).toBeTruthy());
+    fireEvent.click(screen.getByRole("radio", { name: "Sharp" }));
+    expect(prompt()).toBeTruthy(); // …asks again
+  });
+
+  test("outline and display options don't ask (they don't move beads)", async () => {
+    await withEdit();
+    fireEvent.click(screen.getAllByLabelText("Outline")[0]!);
+    fireEvent.click(screen.getByLabelText("Codes"));
+    expect(prompt() === null).toBe(true);
   });
 });

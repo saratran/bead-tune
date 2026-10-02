@@ -47,6 +47,7 @@ export function EditBar({
   onUndo,
   canClear,
   onClear,
+  outline,
 }: {
   tool: EditTool;
   onTool: (t: EditTool) => void;
@@ -56,6 +57,8 @@ export function EditBar({
   onUndo: () => void;
   canClear: boolean;
   onClear: () => void;
+  /** Outline is drawn after hand edits, so it follows them; toggled here too. */
+  outline?: { on: boolean; color: BeadColor; onToggle: (on: boolean) => void; onChooseColor: () => void };
 }) {
   return (
     <div className="edit-bar">
@@ -76,6 +79,17 @@ export function EditBar({
       <button className="btn btn-ghost" disabled={!canClear} onClick={onClear}>
         Clear edits
       </button>
+      {outline && (
+        <span className="edit-outline">
+          <Toggle label="Outline" checked={outline.on} onChange={outline.onToggle} />
+          {outline.on && (
+            <button className="btn btn-ghost row" onClick={outline.onChooseColor} title="Outline colour" aria-label="Edit bar outline colour">
+              <span className="dot big" style={{ background: outline.color.hex }} />
+              {outline.color.code}
+            </button>
+          )}
+        </span>
+      )}
     </div>
   );
 }

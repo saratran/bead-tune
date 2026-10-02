@@ -115,9 +115,10 @@ describe("projects in the app", () => {
     await saveAs("Berry");
     fireEvent.click(within(dialog()).getByLabelText("Close"));
 
-    // Start over with different settings.
+    // Start over with different settings (confirming the hand-edit warning once).
     fireEvent.click(screen.getByRole("radio", { name: "Smooth" }));
-    fireEvent.click(screen.getByText("104"));
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: "Hand edits may be lost" })).getByText("Change anyway"));
+    fireEvent.click(screen.getByText("104")); // not asked again until the next stroke
     await waitFor(() => expect(screen.queryByText(/edited by hand/) === null).toBe(true));
 
     // Open it again.

@@ -11,7 +11,7 @@ import type { Candidate, RefinedSuggestion } from "./lib/auto";
 import { imageFingerprint, loadBookmarks, mergeBookmarks, saveBookmarks, type Bookmark } from "./lib/bookmarks";
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
-import { applyEdits, type Edits } from "./lib/cleanup";
+import { addOutline, applyEdits, type Edits } from "./lib/cleanup";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
 import { applySwaps, type Pattern } from "./lib/pattern";
 import { buildPattern, type PipelineSettings } from "./lib/pipeline";
@@ -172,8 +172,10 @@ export function App() {
   const [modal, setModal] = useState<Modal>(null);
 
   // Hand edits, keyed by cell index for a pattern of size `w` × `h`.
-  const [edits, setEdits] = useState<{ w: number; h: number; map: Edits }>({ w: 0, h: 0, map: new Map() });
-  const [undoStack, setUndoStack] = useState<Edits[]>([]);
+  // Hand edits: `map` applies before the outline (so painted beads get outlined),
+  // `over` holds edits made on outline beads themselves and applies after it.
+  const [edits, setEdits] = useState<{ w: number; h: number; map: Edits; over: Edits }>({ w: 0, h: 0, map: new Map(), over: new Map() });
+  const [undoStack, setUndoStack] = useState<{ map: Edits; over: Edits }[]>([]);
   const [tool, setTool] = useState<EditTool | null>(null);
   const [brush, setBrush] = useState<BeadColor | null>(null);
 
@@ -187,7 +189,8 @@ export function App() {
   }, []);
 
   const clearHandEdits = useCallback(() => {
-    setEdits({ w: 0, h: 0, map: new Map() });
+    setEditsAck(false);
+    setEdits({ w: 0, h: 0, map: new Map(), over: new Map() });
     setUndoStack([]);
   }, []);
 
@@ -258,7 +261,11 @@ export function App() {
     [crop, outlineColor, palette],
   );
 
-  const result = useMemo(() => (source ? buildPattern(source, pipelineSettings(dSettings, dWidth)) : null), [source, dSettings, dWidth, pipelineSettings]);
+  // The outline is added last, after swaps and hand edits; the pipeline only keeps room for it.
+  const result = useMemo(
+    () => (source ? buildPattern(source, { ...pipelineSettings(dSettings, dWidth), outline: null, reserveOutline: dSettings.outline }) : null),
+    [source, dSettings, dWidth, pipelineSettings],
+  );
 
   // Auto suggestions belong to the settings Auto doesn't change; reopening shows them until those change.
   const [autoResults, setAutoResults] = useState<{ key: string; list: RefinedSuggestion[] } | null>(null);
@@ -311,7 +318,33 @@ export function App() {
   // aside (not lost) while the size differs, and replaced by the next stroke.
   const editsFit = swapped && edits.w === swapped.width && edits.h === swapped.height;
 
-  const pattern = useMemo(() => (swapped && editsFit ? applyEdits(swapped, edits.map) : swapped), [swapped, editsFit, edits]);
+  const editedPattern = useMemo(() => (swapped && editsFit ? applyEdits(swapped, edits.map) : swapped), [swapped, editsFit, edits]);
+  const outlineOn = dSettings.outline;
+  const { pattern, outlineCells } = useMemo(() => {
+    if (!editedPattern) return { pattern: null, outlineCells: new Set<number>() };
+    if (!outlineOn) return { pattern: editsFit && edits.over.size ? applyEdits(editedPattern, edits.over) : editedPattern, outlineCells: new Set<number>() };
+    const outlined = addOutline(editedPattern, outlineColor);
+    const cells = new Set<number>();
+    for (let i = 0; i < outlined.cells.length; i++) if (editedPattern.cells[i]! < 0 && outlined.cells[i]! >= 0) cells.add(i);
+    return { pattern: editsFit && edits.over.size ? applyEdits(outlined, edits.over) : outlined, outlineCells: cells };
+  }, [editedPattern, outlineOn, outlineColor, editsFit, edits]);
+  const handEditCount = editsFit ? edits.map.size + edits.over.size : 0;
+
+  // Settings that rebuild the pattern can leave hand edits misaligned or set aside:
+  // ask first. "Change anyway" isn't asked again until the next brush stroke.
+  const [editsAck, setEditsAck] = useState(false);
+  const [editsPrompt, setEditsPrompt] = useState<(() => void) | null>(null);
+  const guardEdits = (apply: () => void) => {
+    if (handEditCount === 0 || editsAck) apply();
+    else setEditsPrompt(() => apply);
+  };
+  /** Image options, except outline-only changes (the outline follows edits). */
+  const changeImageSettings = (next: ImageSettings) => {
+    const { outline: _a, ...before } = imageSettings;
+    const { outline: _b, ...after } = next;
+    if (JSON.stringify(before) === JSON.stringify(after)) setImageSettings(next);
+    else guardEdits(() => setImageSettings(next));
+  };
 
   const onEdit = (index: number, phase: "start" | "move") => {
     if (!pattern) return;
@@ -326,15 +359,20 @@ export function App() {
     const value = tool === "erase" ? null : (brush ?? pattern.colors[0] ?? null);
     if (tool === "paint" && !value) return;
     if (phase === "start") {
+      setEditsAck(false);
       // One undo step per stroke.
-      const snapshot = editsFit ? edits.map : new Map();
+      const snapshot = editsFit ? { map: edits.map, over: edits.over } : { map: new Map(), over: new Map() };
       setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), snapshot]);
     }
+    // Edits on outline beads recolour/remove that outline bead; others change the shape.
+    const onOutline = outlineCells.has(index) || (editsFit && edits.over.has(index));
     setEdits((prev) => {
       const fits = prev.w === pattern.width && prev.h === pattern.height;
       const map = new Map(fits ? prev.map : undefined);
-      map.set(index, value);
-      return { w: pattern.width, h: pattern.height, map };
+      const over = new Map(fits ? prev.over : undefined);
+      if (onOutline) over.set(index, value);
+      else map.set(index, value);
+      return { w: pattern.width, h: pattern.height, map, over };
     });
   };
 
@@ -342,7 +380,7 @@ export function App() {
     const prev = undoStack[undoStack.length - 1];
     if (!prev) return;
     setUndoStack(undoStack.slice(0, -1));
-    setEdits((e) => ({ ...e, map: prev }));
+    setEdits((e) => ({ ...e, map: prev.map, over: prev.over }));
   };
 
   /** Eyedropper on the source thumbnail: sample the clicked pixel as the background colour. */
@@ -359,7 +397,8 @@ export function App() {
     const fy = (e.clientY - rect.top - oy) / (img.naturalHeight * scale);
     if (fx < 0 || fy < 0 || fx >= 1 || fy >= 1) return;
     const i = (Math.floor(fy * native.height) * native.width + Math.floor(fx * native.width)) * 4;
-    setImageSettings({ ...imageSettings, bgColor: [native.data[i]!, native.data[i + 1]!, native.data[i + 2]!] });
+    const bgColor: [number, number, number] = [native.data[i]!, native.data[i + 1]!, native.data[i + 2]!];
+    guardEdits(() => setImageSettings({ ...imageSettings, bgColor }));
     setPickingBg(false);
   };
 
@@ -404,7 +443,12 @@ export function App() {
       ownedOnly,
       excluded: [...excluded],
       swaps: [...swaps].map(([from, to]) => [from, to.id]),
-      edits: { w: edits.w, h: edits.h, cells: [...edits.map].map(([i, c]) => [i, c?.id ?? null]) },
+      edits: {
+        w: edits.w,
+        h: edits.h,
+        cells: [...edits.map].map(([i, c]) => [i, c?.id ?? null]),
+        outlineCells: [...edits.over].map(([i, c]) => [i, c?.id ?? null]),
+      },
       bookmarks,
     }),
     [brandId, width, boardSize, imageSettings, crop, outlineId, ownedOnly, excluded, swaps, edits, bookmarks],
@@ -412,7 +456,7 @@ export function App() {
   const projectJson = useMemo(() => JSON.stringify(projectState), [projectState]);
   const dirty = !!project && projectJson !== savedJson;
   // Work that would be lost: changes to an open project, or hand/colour edits on an unsaved image.
-  const unsavedWork = project ? dirty : !!image && (edits.map.size > 0 || swaps.size > 0 || excluded.size > 0);
+  const unsavedWork = project ? dirty : !!image && (edits.map.size > 0 || edits.over.size > 0 || swaps.size > 0 || excluded.size > 0);
 
   /** Asks before replacing unsaved work; resolves true to go ahead. */
   const confirmDiscard = (): Promise<boolean> =>
@@ -509,13 +553,9 @@ export function App() {
     setOwnedOnly(st.ownedOnly);
     setExcluded(new Set(st.excluded));
     setSwaps(new Map(st.swaps.flatMap(([from, to]) => (byId.has(to) ? [[from, byId.get(to)!] as const] : []))));
-    setEdits({
-      w: st.edits.w,
-      h: st.edits.h,
-      map: new Map(
-        st.edits.cells.flatMap(([i, id]): [number, BeadColor | null][] => (id === null ? [[i, null]] : byId.has(id) ? [[i, byId.get(id)!]] : [])),
-      ),
-    });
+    const restore = (cells: [number, string | null][] = []) =>
+      new Map(cells.flatMap(([i, id]): [number, BeadColor | null][] => (id === null ? [[i, null]] : byId.has(id) ? [[i, byId.get(id)!]] : [])));
+    setEdits({ w: st.edits.w, h: st.edits.h, map: restore(st.edits.cells), over: restore(st.edits.outlineCells) });
     setUndoStack([]);
     setHighlightId(null);
     setTool(null);
@@ -604,7 +644,13 @@ export function App() {
       onChooseBrush={() => setModal({ kind: "brush" })}
       canUndo={undoStack.length > 0}
       onUndo={undo}
-      canClear={!!editsFit && edits.map.size > 0}
+      canClear={handEditCount > 0}
+      outline={{
+        on: imageSettings.outline,
+        color: outlineColor,
+        onToggle: (on) => setImageSettings({ ...imageSettings, outline: on }),
+        onChooseColor: () => setModal({ kind: "outline" }),
+      }}
       onClear={clearHandEdits}
     />
   );
@@ -676,7 +722,7 @@ export function App() {
             {cropPx && (
               <p className="hint crop-status">
                 Cropped to {cropPx.w} × {cropPx.h} px ·{" "}
-                <button className="link-btn" onClick={() => setCrop(FULL_CROP)}>
+                <button className="link-btn" onClick={() => guardEdits(() => setCrop(FULL_CROP))}>
                   Remove crop
                 </button>
               </p>
@@ -700,7 +746,10 @@ export function App() {
 
           <div className="field">
             <label htmlFor="brand">Beads</label>
-            <select id="brand" className="input" value={brandId} onChange={(e) => changeBrand(e.target.value)}>
+            <select id="brand" className="input" value={brandId} onChange={(e) => {
+                const id = e.target.value;
+                guardEdits(() => changeBrand(id));
+              }}>
               {BRANDS.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -722,11 +771,14 @@ export function App() {
                 max={300}
                 disabled={imageSettings.sampling === "pixelart" && !!result?.pixelGrid && !result.pixelArtFallback}
                 value={width}
-                onChange={(e) => setWidth(Number(e.target.value))}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  guardEdits(() => setWidth(v));
+                }}
               />
               <div className="segmented">
                 {WIDTH_PRESETS.map((n) => (
-                  <button key={n} className={width === n ? "on" : ""} onClick={() => setWidth(n)}>
+                  <button key={n} className={width === n ? "on" : ""} onClick={() => guardEdits(() => setWidth(n))}>
                     {n}
                   </button>
                 ))}
@@ -756,7 +808,7 @@ export function App() {
 
           <div className="toggles">
             <div className="toggle-row">
-              <Toggle label="Only colours I have" checked={ownedOnly} onChange={setOwnedOnly} />
+              <Toggle label="Only colours I have" checked={ownedOnly} onChange={(v) => guardEdits(() => setOwnedOnly(v))} />
               <button className="link-btn" onClick={() => setModal({ kind: "owned" })}>
                 Choose ({ownedSet.size})
               </button>
@@ -770,7 +822,7 @@ export function App() {
 
           <ImageOptions
             settings={imageSettings}
-            onChange={setImageSettings}
+            onChange={changeImageSettings}
             result={result}
             outlineColor={outlineColor}
             onChooseOutline={() => setModal({ kind: "outline" })}
@@ -836,10 +888,10 @@ export function App() {
                     : "Your pattern appears here."}
               </div>
             )}
-            {editsFit && edits.map.size > 0 && (
+            {handEditCount > 0 && (
               <div className="edited">
                 <span>
-                  {edits.map.size} bead{edits.map.size === 1 ? "" : "s"} edited by hand
+                  {handEditCount} bead{handEditCount === 1 ? "" : "s"} edited by hand
                 </span>
               </div>
             )}
@@ -862,7 +914,7 @@ export function App() {
             highlightId={highlightId}
             onHighlight={setHighlightId}
             onSwap={(c) => setModal({ kind: "swap", from: c })}
-            onRemove={removeColor}
+            onRemove={(c) => guardEdits(() => removeColor(c))}
             canRemove={(pattern?.colors.length ?? 0) > 1}
           />
         </section>
@@ -950,6 +1002,48 @@ export function App() {
           onClose={() => setProjectsOpen(false)}
         />
       )}
+      {editsPrompt && (
+        <div className="modal-backdrop confirm-backdrop" onClick={() => setEditsPrompt(null)}>
+          <div className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-label="Hand edits may be lost" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Change settings with hand edits?</h3>
+            </div>
+            <p className="confirm-text">
+              You've edited {handEditCount} bead{handEditCount === 1 ? "" : "s"} by hand. This change rebuilds the pattern underneath: your edits stay at the same bead positions, so they may
+              no longer line up — and if the pattern's size changes they're set aside, and lost once you edit again.
+            </p>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={() => setEditsPrompt(null)} autoFocus>
+                Cancel
+              </button>
+              <div className="actions">
+                <button
+                  className="btn btn-danger"
+                  onClick={() => {
+                    const apply = editsPrompt;
+                    setEditsPrompt(null);
+                    clearHandEdits();
+                    apply();
+                  }}
+                >
+                  Clear edits and change
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const apply = editsPrompt;
+                    setEditsPrompt(null);
+                    setEditsAck(true);
+                    apply();
+                  }}
+                >
+                  Change anyway
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {discardPrompt && (
         <div className="modal-backdrop confirm-backdrop" onClick={() => void answerDiscard("cancel")}>
           <div className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-label="Unsaved changes" onClick={(e) => e.stopPropagation()}>
@@ -1007,7 +1101,7 @@ export function App() {
           base={pipelineSettings(imageSettings, width)}
           results={autoResults?.key === autoKey ? autoResults.list : null}
           onResults={(list) => setAutoResults({ key: autoKey, list })}
-          onApply={applySuggestion}
+          onApply={(sg) => guardEdits(() => applySuggestion(sg))}
           bookmarks={bookmarks}
           onBookmarksChange={setBookmarks}
           onClose={() => setModal(null)}
@@ -1022,7 +1116,7 @@ export function App() {
           image={image}
           crop={crop}
           onApply={(c) => {
-            setCrop(c);
+            guardEdits(() => setCrop(c));
             setModal(null);
           }}
           onClose={() => setModal(null)}

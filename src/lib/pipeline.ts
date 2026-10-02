@@ -19,6 +19,11 @@ export interface PipelineSettings {
   cleanup: number;
   /** One-bead outline colour around the subject, or null for none. */
   outline: BeadColor | null;
+  /**
+   * Leave the outline's one-bead margin but don't draw it — the app adds the
+   * outline itself after colour swaps and hand edits.
+   */
+  reserveOutline?: boolean;
   options: PatternOptions;
 }
 
@@ -43,7 +48,7 @@ export const MAX_PIXEL_ART_SIDE = 300;
 export function buildPattern(source: ImageSource, s: PipelineSettings): PipelineResult {
   const userCrop = s.crop ?? FULL_CROP;
   // The outline adds one bead on each side; keep the final width as requested.
-  const inner = Math.max(1, s.outline ? s.width - 2 : s.width);
+  const inner = Math.max(1, s.outline || s.reserveOutline ? s.width - 2 : s.width);
   let options = s.options;
   const result: PipelineResult = { pattern: undefined! };
 
@@ -104,8 +109,9 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
   }
 
   if (s.cleanup > 0) pattern = removeStrays(pattern, s.cleanup);
-  if (s.outline) {
-    pattern = addOutline(padPattern(pattern, 1), s.outline);
+  if (s.outline || s.reserveOutline) {
+    pattern = padPattern(pattern, 1);
+    if (s.outline) pattern = addOutline(pattern, s.outline);
     if (result.sampled) result.sampled = { ...result.sampled, offsetX: result.sampled.offsetX + 1, offsetY: result.sampled.offsetY + 1 };
   }
   result.pattern = pattern;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { makePattern, mard } from "../test/fixtures";
-import { addOutline, applyEdits, contentBox, cropPattern, padPattern, removeStrays, trimPattern } from "./cleanup";
+import { addOutline, applyEdits, contentBox, cropPattern, exteriorCells, padPattern, removeStrays, trimPattern } from "./cleanup";
 import type { Pattern } from "./pattern";
 
 /** Back to rows of letters (a = first colour of `ref`), for readable assertions. */
@@ -122,5 +122,22 @@ describe("applyEdits", () => {
 
   test("no edits returns the same pattern", () => {
     expect(applyEdits(p, new Map())).toBe(p);
+  });
+});
+
+describe("outline only outside the shape", () => {
+  const outline = mard[5]!; // "f"
+
+  test("holes inside the shape stay empty", () => {
+    const ring = makePattern([".......", ".aaaaa.", ".a...a.", ".a...a.", ".a...a.", ".aaaaa.", "......."]);
+    expect(rows(addOutline(ring, outline))).toEqual(["fffffff", "faaaaaf", "fa...af", "fa...af", "fa...af", "faaaaaf", "fffffff"]);
+  });
+
+  test("exteriorCells marks empty cells reachable from the edge", () => {
+    const p = makePattern([".aaa.", ".a.a.", ".aaa."]);
+    const outside = exteriorCells(p);
+    expect(outside[0]).toBe(1); // corner
+    expect(outside[7]).toBe(0); // enclosed hole at (2,1)
+    expect(outside[6]).toBe(0); // a bead
   });
 });

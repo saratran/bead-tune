@@ -162,3 +162,12 @@ describe("crop", () => {
     expect(pattern.colors[pattern.cells[0]!]).toBe(art(4, 0));
   });
 });
+
+test("reserveOutline leaves the margin without drawing the outline", () => {
+  const black = palette.reduce((a, b) => (b.lab[0] < a.lab[0] ? b : a));
+  const drawn = buildPattern(square(), { ...base, sampling: "sharp", trim: true, outline: black, options: withBg }).pattern;
+  const reserved = buildPattern(square(), { ...base, sampling: "sharp", trim: true, outline: null, reserveOutline: true, options: withBg }).pattern;
+  expect([reserved.width, reserved.height]).toEqual([drawn.width, drawn.height]);
+  expect(reserved.colors.some((c) => c.id === black.id)).toBe(false);
+  expect(reserved.cells[0]).toBe(-1); // the margin is empty
+});

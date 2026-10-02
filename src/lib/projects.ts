@@ -26,7 +26,13 @@ export interface ProjectState {
   /** Bookmarked Auto suggestions (missing in older projects). */
   bookmarks?: import("./bookmarks").Bookmark[];
   /** Hand edits for a `w` × `h` grid: cell index → colour id, or null for a removed bead. */
-  edits: { w: number; h: number; cells: [index: number, colorId: string | null][] };
+  edits: {
+    w: number;
+    h: number;
+    cells: [index: number, colorId: string | null][];
+    /** Edits on outline beads, applied after the outline (missing in older projects). */
+    outlineCells?: [index: number, colorId: string | null][];
+  };
 }
 
 export type ProjectLocation = "local" | "server";

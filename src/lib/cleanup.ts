@@ -122,7 +122,41 @@ export function padPattern(p: Pattern, n: number): Pattern {
   return cropPattern(p, { x: -n, y: -n, w: p.width + 2 * n, h: p.height + 2 * n });
 }
 
-/** Fills every empty cell that touches a bead (including diagonally) with `color`. */
+/** Empty cells connected to the pattern's edge through other empty cells (the outside). */
+export function exteriorCells(p: Pattern): Uint8Array {
+  const { width: w, height: h } = p;
+  const outside = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const seed = (i: number) => {
+    if (p.cells[i] === EMPTY && !outside[i]) {
+      outside[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    seed(x);
+    seed((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    seed(y * w);
+    seed(y * w + w - 1);
+  }
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % w;
+    const y = (i / w) | 0;
+    if (x > 0) seed(i - 1);
+    if (x < w - 1) seed(i + 1);
+    if (y > 0) seed(i - w);
+    if (y < h - 1) seed(i + w);
+  }
+  return outside;
+}
+
+/**
+ * Fills every *outside* empty cell that touches a bead (including diagonally)
+ * with `color`. Holes inside the shape — e.g. beads erased by hand — stay empty.
+ */
 export function addOutline(p: Pattern, color: BeadColor): Pattern {
   const { width: w, height: h } = p;
   const { raw, palette } = editable(p);
@@ -131,9 +165,10 @@ export function addOutline(p: Pattern, color: BeadColor): Pattern {
     outline = palette.length;
     palette.push(color);
   }
+  const outside = exteriorCells(p);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      if (p.cells[y * w + x] !== EMPTY) continue;
+      if (!outside[y * w + x]) continue;
       let touches = false;
       for (let dy = -1; dy <= 1 && !touches; dy++) {
         for (let dx = -1; dx <= 1 && !touches; dx++) {
