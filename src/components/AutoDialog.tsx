@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   autoSuggest,
   candidateSettings,
+  localEngine,
+  type AutoEngine,
   countCombinations,
   tuneFromPreferences,
   pickName,
@@ -17,6 +19,7 @@ import {
   TONE_LABEL,
   TONES,
 } from "../lib/auto";
+import { canUseWorkers, workerEngine } from "../lib/autoPool";
 import {
   allPresets,
   createPreset,
@@ -338,6 +341,38 @@ export function AutoDialog({
   }, [onClose, progress, naming, viewing]);
   useEffect(() => () => abort.current?.abort(), []);
 
+  // Evaluation runs on a pool of Web Workers, started on the first search and
+  // stopped when the panel closes; on this thread if workers aren't available.
+  const engine = useRef<Promise<AutoEngine & { size?: number }> | null>(null);
+  const [cores, setCores] = useState(1);
+  const getEngine = () =>
+    (engine.current ??= (async () => {
+      if (image && canUseWorkers()) {
+        try {
+          const pool = await workerEngine(await createImageBitmap(image), base);
+          setCores(pool.size);
+          return pool;
+        } catch (err) {
+          console.warn("Auto: running on the main thread instead of workers.", err);
+        }
+      }
+      return localEngine(source, base);
+    })());
+  useEffect(
+    () => () => {
+      void engine.current?.then((e) => e.dispose?.());
+    },
+    [],
+  );
+  // Progress from many workers arrives fast; repaint at most ~15 times a second.
+  const lastProgress = useRef(0);
+  const showProgress = (p: ScanProgress) => {
+    const now = performance.now();
+    if (now - lastProgress.current < 66 && p.done < p.total) return;
+    lastProgress.current = now;
+    setProgress(p);
+  };
+
   const total = countCombinations(config.space);
   const trying = Math.min(total, config.limit);
   const accurate = config.space.metric.includes("accurate");
@@ -356,8 +391,9 @@ export function AutoDialog({
         tones: config.tones,
         refine: config.refine.enabled ? { method: config.refine.method, budget: config.refine.budget } : null,
       },
-      setProgress,
+      showProgress,
       ctrl.signal,
+      await getEngine(),
     );
     abort.current = null;
     setProgress(null);
@@ -385,8 +421,9 @@ export function AutoDialog({
       seeds.map((s) => ({ label: pickName(s.label), candidate: s.candidate, tone: s.tone })),
       // A few variations of each pick (at least 4 results, or 2 per pick).
       { count: Math.max(config.count, 4, seeds.length * 2), refine: { method: config.refine.method, budget: Math.max(40, config.refine.budget) } },
-      setProgress,
+      showProgress,
       ctrl.signal,
+      await getEngine(),
     );
     abort.current = null;
     setProgress(null);
@@ -689,6 +726,7 @@ export function AutoDialog({
                 <progress max={progress.total} value={progress.done} aria-label="Scan progress" />
                 <span className="small">
                   {progress.done} / {progress.total}
+                  {cores > 1 && <span className="muted"> · {cores} workers</span>}
                 </span>
                 <button className="btn btn-ghost" onClick={() => abort.current?.abort()}>
                   Stop

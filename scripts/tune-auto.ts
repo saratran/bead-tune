@@ -10,11 +10,12 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import { rgbToLab } from "../src/lib/color";
-import { autoSuggest, DEFAULT_SEARCH_SPACE, effortCost, type Tone, enumerateCandidates, featureCost, likenessToleranceFor, makeEvaluator, objectiveFor, rate, refine, scan, SEARCH_OPTIONS, suggest, tuneFromPreferences, pickName, type Candidate, type SearchSpace } from "../src/lib/auto";
+import { autoSuggest, batched, DEFAULT_SEARCH_SPACE, effortCost, type Tone, enumerateCandidates, featureCost, likenessToleranceFor, makeEvaluator, objectiveFor, rate, refine, scan, SEARCH_OPTIONS, suggest, tuneFromPreferences, pickName, type Candidate, type SearchSpace } from "../src/lib/auto";
 import { BRANDS, DEFAULT_BRAND_ID } from "../src/lib/palettes";
 import { DEFAULT_PATTERN_OPTIONS, type Pattern } from "../src/lib/pattern";
 import type { PipelineSettings } from "../src/lib/pipeline";
 import { FULL_CROP, imageDataSource, makeImageData, sampleGrid } from "../src/lib/sampling";
+import { decodeImage } from "./decode";
 
 const args = process.argv.slice(2);
 const flag = (name: string, fallback: string) => {
@@ -28,29 +29,7 @@ const outDir = flag("out", "auto-tune-out");
 const limit = Number(flag("limit", "400"));
 mkdirSync(outDir, { recursive: true });
 
-// ---- decode via sips → 24-bit BMP (max 1024px), then parse
-const bmpPath = join(outDir, "source.bmp");
-await $`sips -s format bmp -Z 1024 ${input} --out ${bmpPath}`.quiet();
-function readBmp(buf: Uint8Array): ImageData {
-  const dv = new DataView(buf.buffer, buf.byteOffset);
-  const offset = dv.getUint32(10, true);
-  const w = dv.getInt32(18, true);
-  const hRaw = dv.getInt32(22, true);
-  const bpp = dv.getUint16(28, true);
-  const h = Math.abs(hRaw);
-  const bytes = bpp / 8;
-  const stride = Math.ceil((w * bytes) / 4) * 4;
-  const img = makeImageData(w, h);
-  for (let y = 0; y < h; y++) {
-    const row = hRaw > 0 ? h - 1 - y : y; // bottom-up unless height is negative
-    for (let x = 0; x < w; x++) {
-      const p = offset + row * stride + x * bytes;
-      img.data.set([buf[p + 2]!, buf[p + 1]!, buf[p]!, bytes === 4 ? buf[p + 3]! : 255], (y * w + x) * 4);
-    }
-  }
-  return img;
-}
-const pixels = readBmp(new Uint8Array(await Bun.file(bmpPath).arrayBuffer()));
+const pixels = await decodeImage(input);
 const source = imageDataSource(pixels);
 console.log(`source ${pixels.width}×${pixels.height}, width ${width} beads`);
 
@@ -96,10 +75,10 @@ if (args.includes("--compare-refine")) {
     const startCost = objective(sg.metrics);
     const t0 = performance.now();
     const tol = likenessToleranceFor(sg.label);
-    const p = await refine(evaluate, sg, objective, { method: "pattern", budget, likenessTolerance: tol });
+    const p = await refine(batched(evaluate), sg, objective, { method: "pattern", budget, likenessTolerance: tol });
     refinedPatterns.push(p.best.pattern);
     const t1 = performance.now();
-    const a = await refine(evaluate, sg, objective, { method: "anneal", budget, seed: 7, likenessTolerance: tol });
+    const a = await refine(batched(evaluate), sg, objective, { method: "anneal", budget, seed: 7, likenessTolerance: tol });
     const t2 = performance.now();
     const pc = objective(p.best.metrics), ac = objective(a.best.metrics);
     totals.start += startCost; totals.pattern += pc; totals.anneal += ac; totals.tPattern += t1 - t0; totals.tAnneal += t2 - t1;

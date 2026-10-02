@@ -290,8 +290,9 @@ export function canvasSource(img: HTMLImageElement | ImageBitmap): ImageSource {
     return value;
   };
 
+  // A page canvas, or an OffscreenCanvas inside a Web Worker (no document there).
   const canvas = (w: number, h: number) => {
-    const c = document.createElement("canvas");
+    const c = typeof document !== "undefined" ? document.createElement("canvas") : (new OffscreenCanvas(w, h) as unknown as HTMLCanvasElement);
     c.width = w;
     c.height = h;
     const ctx = c.getContext("2d", { willReadFrequently: true })!;

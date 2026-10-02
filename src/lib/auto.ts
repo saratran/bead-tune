@@ -597,8 +597,57 @@ export function makeEvaluator(source: ImageSource, base: PipelineSettings, tone:
 }
 
 /**
- * Runs the scan, yielding to the browser between chunks so the page stays
- * responsive. Stops early (returning what it has) when `signal` is aborted.
+ * Evaluates several candidates (for one colour tone), possibly in parallel.
+ * Results come back in order; null = an empty pattern, or skipped after `signal` aborted.
+ * `onEach` is called as each one finishes.
+ */
+export type EvaluateMany = (candidates: Candidate[], onEach?: () => void, signal?: AbortSignal) => Promise<(Evaluated | null)[]>;
+
+/** Where candidates get built and scored: on this thread, or a pool of Web Workers. */
+export interface AutoEngine {
+  forTone(tone: Tone): EvaluateMany;
+  /** Stops any workers (the engine can't be used afterwards). */
+  dispose?(): void;
+}
+
+/**
+ * Runs a one-at-a-time evaluator over a batch, yielding to the browser between
+ * chunks of `sliceMs` so the page stays responsive.
+ */
+export function batched(evaluate: (c: Candidate) => Evaluated | null, sliceMs = 24): EvaluateMany {
+  return async (candidates, onEach, signal) => {
+    const out: (Evaluated | null)[] = [];
+    let sliceStart = performance.now();
+    for (const c of candidates) {
+      if (signal?.aborted) {
+        out.push(null);
+        continue;
+      }
+      out.push(evaluate(c));
+      onEach?.();
+      if (performance.now() - sliceStart > sliceMs) {
+        await yieldToBrowser();
+        sliceStart = performance.now();
+      }
+    }
+    return out;
+  };
+}
+
+/** Evaluates on this thread, sharing pattern builds between tones. */
+export function localEngine(source: ImageSource, base: PipelineSettings, sliceMs = 24): AutoEngine {
+  const builds = new Map<string, Built>();
+  const tones = new Map<Tone, EvaluateMany>();
+  return {
+    forTone(tone) {
+      if (!tones.has(tone)) tones.set(tone, batched(makeEvaluator(source, base, tone, builds), sliceMs));
+      return tones.get(tone)!;
+    },
+  };
+}
+
+/**
+ * Runs the scan. Stops early (returning what it has) when `signal` is aborted.
  */
 export async function scan(
   source: ImageSource,
@@ -607,22 +656,12 @@ export async function scan(
   onProgress?: (p: ScanProgress) => void,
   signal?: AbortSignal,
   sliceMs = 24,
-  evaluate = makeEvaluator(source, base),
+  evaluate: EvaluateMany = batched(makeEvaluator(source, base), sliceMs),
 ): Promise<Evaluated[]> {
-  const results: Evaluated[] = [];
-  let sliceStart = performance.now();
-  for (let i = 0; i < candidates.length; i++) {
-    if (signal?.aborted) break;
-    const r = evaluate(candidates[i]!);
-    if (r) results.push(r);
-    if (performance.now() - sliceStart > sliceMs) {
-      onProgress?.({ phase: "search", done: i + 1, total: candidates.length });
-      await yieldToBrowser();
-      sliceStart = performance.now();
-    }
-  }
+  let done = 0;
+  const results = await evaluate(candidates, () => onProgress?.({ phase: "search", done: ++done, total: candidates.length }), signal);
   onProgress?.({ phase: "search", done: candidates.length, total: candidates.length });
-  return results;
+  return results.filter((r): r is Evaluated => r !== null);
 }
 
 // ---------------------------------------------------------------- refinement
@@ -754,7 +793,7 @@ function rng(seed: number) {
  * fixed) to lower `objective`. Returns the best found and everything tried.
  */
 export async function refine(
-  evaluate: (c: Candidate) => Evaluated | null,
+  evaluate: EvaluateMany,
   start: Evaluated,
   objective: (m: Metrics) => number,
   opts: RefineOptions,
@@ -770,36 +809,34 @@ export async function refine(
   let best = start;
   let bestCost = cost(start.metrics);
   let spent = 0;
-  let sliceStart = performance.now();
 
-  const tryCandidate = async (c: Candidate): Promise<Evaluated | null> => {
-    spent++;
-    const r = evaluate(c);
-    if (r) tried.push(r);
-    onStep?.();
-    if (performance.now() - sliceStart > 24) {
-      await yieldToBrowser();
-      sliceStart = performance.now();
-    }
-    return r;
+  const tryMany = async (cs: Candidate[]): Promise<(Evaluated | null)[]> => {
+    spent += cs.length;
+    const rs = await evaluate(cs, onStep, signal);
+    for (const r of rs) if (r) tried.push(r);
+    return rs;
   };
 
   if (opts.method === "pattern") {
-    // Compass search: try ± each setting; keep any improvement; halve steps when stuck.
+    // Compass search: try ± each setting (all at once, so they can run in parallel),
+    // move to the best improvement; halve steps when nothing improves.
     const steps = new Map(dims.map((d) => [d.key, d.step]));
     while (spent < opts.budget && !signal?.aborted) {
-      let improved = false;
+      const moves: Candidate[] = [];
       for (const d of dims) {
         for (const dir of [1, -1]) {
-          if (spent >= opts.budget || signal?.aborted) break;
           const next = move(best.candidate, d, dir * steps.get(d.key)!);
-          if (getDim(next, d) === getDim(best.candidate, d)) continue; // at the edge
-          const r = await tryCandidate(next);
+          if (getDim(next, d) !== getDim(best.candidate, d)) moves.push(next); // else at the edge
+        }
+      }
+      let improved = false;
+      const batch = moves.slice(0, opts.budget - spent);
+      if (batch.length) {
+        for (const r of await tryMany(batch)) {
           if (r && cost(r.metrics) < bestCost - 1e-9) {
             best = r;
             bestCost = cost(r.metrics);
             improved = true;
-            break;
           }
         }
       }
@@ -826,7 +863,7 @@ export async function refine(
       const d = dims[Math.floor(random() * dims.length)]!;
       const scale = d.step * (0.3 + (temp / t0) * 0.7);
       const next = move(current.candidate, d, gauss() * scale);
-      const r = await tryCandidate(next);
+      const [r] = await tryMany([next]);
       if (!r) continue;
       const c = cost(r.metrics);
       if (c < currentCost || random() < Math.exp((currentCost - c) / temp)) {
@@ -874,9 +911,9 @@ export async function autoSuggest(
   options: AutoOptions,
   onProgress?: (p: ScanProgress) => void,
   signal?: AbortSignal,
+  engine: AutoEngine = localEngine(source, base),
 ): Promise<RefinedSuggestion[]> {
   const tones = options.tones?.length ? options.tones : (["natural"] as Tone[]);
-  const builds = new Map<string, Built>();
   const plans = tones.map((tone) => ({ tone, candidates: enumerateCandidates(spaceForTone(options.space, tone), options.limit) }));
   const searchTotal = plans.reduce((n, p) => n + p.candidates.length, 0);
   const refineTotal = options.refine ? tones.length * options.count * options.refine.budget : 0;
@@ -886,7 +923,7 @@ export async function autoSuggest(
   const out: RefinedSuggestion[] = [];
   for (const { tone, candidates } of plans) {
     if (signal?.aborted) break;
-    const evaluate = makeEvaluator(source, base, tone, builds);
+    const evaluate = engine.forTone(tone);
     const offset = searchDone;
     const grid = await scan(source, base, candidates, (p) => onProgress?.({ phase: "search", done: offset + p.done, total: searchTotal }), signal, 24, evaluate);
     searchDone += candidates.length;
@@ -896,17 +933,23 @@ export async function autoSuggest(
     let finals: RefinedSuggestion[] = picks;
     if (options.refine && !signal?.aborted) {
       const pool: Evaluated[] = [...grid];
+      const refineOpts = options.refine;
+      // Every pick is fine-tuned at the same time (each one's steps are sequential).
+      const runs = await Promise.all(
+        picks.map((pick, n) =>
+          refine(
+            evaluate,
+            pick,
+            objectiveFor(pick.label),
+            { likenessTolerance: likenessToleranceFor(pick.label), ...refineOpts, seed: (refineOpts.seed ?? 1) + n },
+            signal,
+            () => onProgress?.({ phase: "refine", done: ++refineDone, total: refineTotal }),
+          ),
+        ),
+      );
       const refined: { label: string; reason: string; from: Candidate; best: Evaluated }[] = [];
-      for (const [n, pick] of picks.entries()) {
-        if (signal?.aborted) break;
-        const { best, tried } = await refine(
-          evaluate,
-          pick,
-          objectiveFor(pick.label),
-          { likenessTolerance: likenessToleranceFor(pick.label), ...options.refine, seed: (options.refine.seed ?? 1) + n },
-          signal,
-          () => onProgress?.({ phase: "refine", done: ++refineDone, total: refineTotal }),
-        );
+      for (const [n, { best, tried }] of runs.entries()) {
+        const pick = picks[n]!;
         pool.push(...tried);
         refined.push({ label: pick.label, reason: pick.reason, from: pick.candidate, best });
       }
@@ -978,18 +1021,13 @@ export async function tuneFromPreferences(
   options: { count: number; refine: RefineOptions },
   onProgress?: (p: ScanProgress) => void,
   signal?: AbortSignal,
+  engine: AutoEngine = localEngine(source, base),
 ): Promise<RefinedSuggestion[]> {
-  const builds = new Map<string, Built>();
-  const evaluators = new Map<Tone, (c: Candidate) => Evaluated | null>();
-  const evaluatorFor = (tone: Tone) => {
-    if (!evaluators.has(tone)) evaluators.set(tone, makeEvaluator(source, base, tone, builds));
-    return evaluators.get(tone)!;
-  };
   const objective = objectiveFor("Most faithful");
   const simpler = objectiveFor("Simplest");
   // Shorter runs for the extra variations, so tuning stays quick.
   const sideBudget = Math.max(10, Math.round(options.refine.budget / 2));
-  const perSeed = neighbours(seeds[0]?.candidate ?? ({} as Candidate)).length + options.refine.budget + 2 * sideBudget;
+  const perSeed = 1 + neighbours(seeds[0]?.candidate ?? ({} as Candidate)).length + options.refine.budget + 2 * sideBudget;
   const total = Math.max(1, seeds.length * perSeed);
   let done = 0;
   const step = () => onProgress?.({ phase: "refine", done: ++done, total });
@@ -997,41 +1035,33 @@ export async function tuneFromPreferences(
   type Variation = { label: string; reason: string; from: Candidate; best: Evaluated; tone: Tone };
   const perPick: Variation[][] = [];
 
-  for (const [n, seed] of seeds.entries()) {
-    if (signal?.aborted) break;
+  // Each pick is tuned at the same time as the others.
+  const tuneOne = async (seed: PreferenceSeed, n: number): Promise<{ tone: Tone; mine: Evaluated[]; out: Variation[] } | null> => {
     const tone = seed.tone ?? "natural";
     const name = pickName(seed.label);
-    const evaluate = evaluatorFor(tone);
-    if (!pools.has(tone)) pools.set(tone, []);
-    const pool = pools.get(tone)!;
-    const start = evaluate(seed.candidate);
-    step();
-    if (!start) continue;
+    const evaluate = engine.forTone(tone);
+    const [start] = await evaluate([seed.candidate], step, signal);
+    if (!start || signal?.aborted) return null;
     const mine: Evaluated[] = [start];
     // Stay at (or below) the pick's level of effort; allow a hair of slack.
     const maxEffortCost = effortCost(start.metrics) * 1.05;
     const allowed = (m: Metrics) => effortCost(m) <= maxEffortCost && likenessCost(m) <= likenessCost(start.metrics) * 1.03;
     let best = start;
-    for (const c of neighbours(seed.candidate)) {
-      if (signal?.aborted) break;
-      const r = evaluate(c);
-      step();
+    for (const r of await evaluate(neighbours(seed.candidate), step, signal)) {
       if (!r) continue;
       mine.push(r);
       if (allowed(r.metrics) && objective(r.metrics) < objective(best.metrics)) best = r;
-      await yieldToBrowser();
     }
     const seedOf = (k: number) => (options.refine.seed ?? 1) + n * 10 + k;
-    const tuned = await refine(evaluate, best, objective, { ...options.refine, seed: seedOf(0), maxEffortCost, likenessTolerance: 0.03 }, signal, step);
-    mine.push(...tuned.tried);
+    // "Simpler" starts from the pick itself, so it runs alongside the main tuning.
+    const [tuned, easy] = await Promise.all([
+      refine(evaluate, best, objective, { ...options.refine, seed: seedOf(0), maxEffortCost, likenessTolerance: 0.03 }, signal, step),
+      refine(evaluate, start, simpler, { ...options.refine, budget: sideBudget, seed: seedOf(1), likenessTolerance: 0.08 }, signal, step),
+    ]);
+    mine.push(...tuned.tried, ...easy.tried);
     const out: Variation[] = [{ label: `Tuned: ${name}`, reason: "Your pick, adjusted to keep more of the original's features", from: seed.candidate, best: tuned.best, tone }];
-
-    if (!signal?.aborted) {
-      const easy = await refine(evaluate, start, simpler, { ...options.refine, budget: sideBudget, seed: seedOf(1), likenessTolerance: 0.08 }, signal, step);
-      mine.push(...easy.tried);
-      if (effortCost(easy.best.metrics) < effortCost(tuned.best.metrics) * 0.95) {
-        out.push({ label: `Simpler: ${name}`, reason: "Like your pick, but easier to make (fewer colours or strays)", from: seed.candidate, best: easy.best, tone });
-      }
+    if (!signal?.aborted && effortCost(easy.best.metrics) < effortCost(tuned.best.metrics) * 0.95) {
+      out.push({ label: `Simpler: ${name}`, reason: "Like your pick, but easier to make (fewer colours or strays)", from: seed.candidate, best: easy.best, tone });
     }
     if (!signal?.aborted) {
       const rich = await refine(evaluate, tuned.best, (m) => featureCost(m) + 0.5 * likenessCost(m), { ...options.refine, budget: sideBudget, seed: seedOf(2), maxEffortCost: effortCost(start.metrics) * 1.35, likenessTolerance: 0.03 }, signal, step);
@@ -1051,8 +1081,13 @@ export async function tuneFromPreferences(
       v++;
       out.push({ label: `Variation ${v}: ${name}`, reason: "A close alternative to your pick", from: seed.candidate, best: r, tone });
     }
-    pool.push(...mine);
-    perPick.push(out);
+    return { tone, mine, out };
+  };
+  for (const done of await Promise.all(seeds.map(tuneOne))) {
+    if (!done) continue;
+    if (!pools.has(done.tone)) pools.set(done.tone, []);
+    pools.get(done.tone)!.push(...done.mine);
+    perPick.push(done.out);
   }
   onProgress?.({ phase: "refine", done: total, total });
 

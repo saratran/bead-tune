@@ -16,6 +16,7 @@ import {
   spaceForTone,
   TONE_CHROMA,
   tuneFromPreferences,
+  batched,
   pickName,
   countCombinations,
   DEFAULT_SEARCH_SPACE,
@@ -214,7 +215,7 @@ describe("refinement", () => {
     const evaluate = makeEvaluator(source, base);
     const first = evaluate(start)!;
     const objective = objectiveFor("Most faithful");
-    const { best, tried } = await refine(evaluate, first, objective, { method, budget: 30, seed: 3 });
+    const { best, tried } = await refine(batched(evaluate), first, objective, { method, budget: 30, seed: 3 });
     expect(tried.length).toBeGreaterThan(0);
     expect(tried.length).toBeLessThanOrEqual(30);
     expect(objective(best.metrics)).toBeLessThanOrEqual(objective(first.metrics));
@@ -225,7 +226,7 @@ describe("refinement", () => {
   test("keeps the categorical choices fixed", async () => {
     const evaluate = makeEvaluator(source, base);
     const sharp = { ...start, sampling: "sharp" as const, cleanup: 1, metric: "standard" as const };
-    const { tried } = await refine(evaluate, evaluate(sharp)!, objectiveFor("Balanced"), { method: "anneal", budget: 25, seed: 9 });
+    const { tried } = await refine(batched(evaluate), evaluate(sharp)!, objectiveFor("Balanced"), { method: "anneal", budget: 25, seed: 9 });
     for (const t of tried) {
       expect(t.candidate).toMatchObject({ sampling: "sharp", cleanup: 1, metric: "standard", denoise: false, minBeads: 0 });
       expect(t.candidate.dither.mode).toBe("none");
@@ -235,19 +236,19 @@ describe("refinement", () => {
   test("never trades away more likeness than allowed", async () => {
     const evaluate = makeEvaluator(source, base);
     const first = evaluate({ ...start, brightness: 0, maxColors: 24 })!;
-    const { best } = await refine(evaluate, first, objectiveFor("Simplest"), { method: "pattern", budget: 60, likenessTolerance: 0.04 });
+    const { best } = await refine(batched(evaluate), first, objectiveFor("Simplest"), { method: "pattern", budget: 60, likenessTolerance: 0.04 });
     expect(likenessCost(best.metrics)).toBeLessThanOrEqual(likenessCost(first.metrics) * 1.04 + 1e-9);
   });
 
   test("dithered suggestions stay dithered", async () => {
     const evaluate = makeEvaluator(source, base);
     const dithered = { ...start, brightness: 0, dither: { mode: "diffusion" as const, strength: 40 } };
-    const { tried } = await refine(evaluate, evaluate(dithered)!, objectiveFor("Smooth shading"), { method: "pattern", budget: 40 });
+    const { tried } = await refine(batched(evaluate), evaluate(dithered)!, objectiveFor("Smooth shading"), { method: "pattern", budget: 40 });
     expect(tried.every((t) => t.candidate.dither.strength >= 30)).toBe(true);
   });
 
   test("annealing is repeatable with the same seed", async () => {
-    const run = async () => (await refine(makeEvaluator(source, base), makeEvaluator(source, base)(start)!, objectiveFor("Balanced"), { method: "anneal", budget: 20, seed: 5 })).best.candidate;
+    const run = async () => (await refine(batched(makeEvaluator(source, base)), makeEvaluator(source, base)(start)!, objectiveFor("Balanced"), { method: "anneal", budget: 20, seed: 5 })).best.candidate;
     expect(await run()).toEqual(await run());
   });
 
