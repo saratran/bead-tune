@@ -1385,3 +1385,11 @@ input[type="range"] {
     flex-direction: column;
   }
 }
+
+.toast-error {
+  background: #d93a4a;
+  color: #fff;
+  max-width: calc(100vw - 32px);
+  border-radius: 14px;
+  text-align: center;
+}

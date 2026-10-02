@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
-import { listProjects } from "../lib/projects";
+import { listProjects, loadProjectImage } from "../lib/projects";
 import { mockPixels, PNG_DATA_URL } from "../test/canvas-mock";
 
 const redSquare = (w: number, h: number) => {
@@ -194,6 +194,47 @@ describe("projects in the app", () => {
       await waitFor(() => expect(downloads[0]).toStartWith("Berry-bead-pattern."));
     } finally {
       HTMLAnchorElement.prototype.click = realClick;
+    }
+  });
+});
+
+describe("saving robustness", () => {
+  test("a picked photo that later becomes unreadable (Android) can still be saved", async () => {
+    mockPixels(redSquare);
+    render(<App />);
+    const file = png();
+    // Like a Google Photos pick on Android: readable when picked, but access is
+    // revoked a little later — before the user gets round to saving.
+    let revoked = false;
+    const notReadable = () => Promise.reject(new DOMException("The requested file could not be read", "NotReadableError"));
+    Object.defineProperty(file, "arrayBuffer", { value: () => (revoked ? notReadable() : Blob.prototype.arrayBuffer.call(file)) });
+    fireEvent.change(document.querySelector("input[type=file]")!, { target: { files: [file] } });
+    await waitFor(() => expect(document.querySelector(".pattern-canvas")).toBeTruthy());
+    revoked = true;
+
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast()).toBe("Saved “dog”"));
+    expect(dialog().querySelector(".error")).toBeNull();
+    // The stored image is the photo's bytes.
+    const blob = await loadProjectImage((await listProjects())[0]!.id);
+    expect(blob!.size).toBe(file.size);
+  });
+
+  test("a failed quick save shows a visible error", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    fireEvent.click(screen.getByText("78"));
+    // Storage goes away (e.g. blocked by the browser).
+    const saved = globalThis.indexedDB;
+    (globalThis as { indexedDB?: unknown }).indexedDB = undefined;
+    try {
+      fireEvent.click(screen.getAllByText("Save")[0]!);
+      await waitFor(() => expect(document.querySelector(".toast-error")?.textContent).toBe("Couldn't save: This browser can't store projects."));
+      expect(screen.getByRole("alert")).toBeTruthy();
+    } finally {
+      globalThis.indexedDB = saved;
     }
   });
 });

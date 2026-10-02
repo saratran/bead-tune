@@ -128,7 +128,7 @@ export function App() {
   const [project, setProject] = useState<{ id: string; name: string } | null>(null);
   const [savedJson, setSavedJson] = useState<string | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [zoom, setZoom] = useState(1);
   // Resolves the pending "discard unsaved changes?" question.
@@ -213,7 +213,10 @@ export function App() {
     if (!(await confirmDiscard())) return;
     try {
       setError(null);
-      startImage(await loadImage(file), file, file.name.replace(/\.[^.]+$/, "") || "pattern");
+      // Copy the bytes now: on Android, a picked photo can become unreadable later
+      // (e.g. Google Photos revokes access), which would make saving fail.
+      const blob = new Blob([await file.arrayBuffer()], { type: file.type || "image/png" });
+      startImage(await loadImage(blob), blob, file.name.replace(/\.[^.]+$/, "") || "pattern");
     } catch (e) {
       setError((e as Error).message);
     }
@@ -381,7 +384,7 @@ export function App() {
       try {
         await save(project.name);
       } catch (e) {
-        setError((e as Error).message);
+        setNotice({ text: `Couldn't save: ${(e as Error).message}`, error: true });
         resolve(false);
         return;
       }
@@ -408,7 +411,7 @@ export function App() {
 
   useEffect(() => {
     if (!notice) return;
-    const t = setTimeout(() => setNotice(null), 2500);
+    const t = setTimeout(() => setNotice(null), notice.error ? 8000 : 2500);
     return () => clearTimeout(t);
   }, [notice]);
 
@@ -425,11 +428,11 @@ export function App() {
     requestPersistentStorage();
     setProject({ id: saved.id, name: saved.name });
     setSavedJson(projectJson);
-    setNotice(`Saved “${saved.name}”`);
+    setNotice({ text: `Saved “${saved.name}”` });
   };
 
   const quickSave = () => {
-    if (project) save(project.name).catch((e) => setError((e as Error).message));
+    if (project) save(project.name).catch((e) => setNotice({ text: `Couldn't save: ${(e as Error).message}`, error: true }));
     else setProjectsOpen(true);
   };
 
@@ -468,7 +471,7 @@ export function App() {
     setError(null);
     setProject({ id: meta.id, name: meta.name });
     markSaved.current = true;
-    setNotice(`Opened “${meta.name}”`);
+    setNotice({ text: `Opened “${meta.name}”` });
     return true;
   };
 
@@ -857,8 +860,8 @@ export function App() {
         </div>
       )}
       {notice && (
-        <div className="toast" role="status">
-          {notice}
+        <div className={`toast ${notice.error ? "toast-error" : ""}`} role={notice.error ? "alert" : "status"}>
+          {notice.text}
         </div>
       )}
       {projectsOpen && (
