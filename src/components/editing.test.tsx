@@ -33,8 +33,8 @@ describe("ImageOptions", () => {
     expect(screen.getByRole("radio", { name: "Smooth" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: "Off" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: "Standard" }).getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByLabelText(/Remove stray beads/).closest(".field")!.textContent).toContain("off");
-    expect(screen.getByLabelText(/Min beads per colour/).closest(".field")!.textContent).toContain("off");
+    expect(screen.getByRole("slider", { name: /Remove stray beads/ }).closest(".field")!.textContent).toContain("off");
+    expect(screen.getByRole("slider", { name: /Min beads per colour/ }).closest(".field")!.textContent).toContain("off");
   });
 
   test("sampling, matching and dithering choices update settings", () => {
@@ -47,17 +47,17 @@ describe("ImageOptions", () => {
 
   test("dither strength only shows while dithering", () => {
     render(<Harness />);
-    expect(screen.queryByLabelText(/Dither strength/)).toBeNull();
+    expect(screen.queryByRole("slider", { name: /Dither strength/ })).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Diffusion" }));
-    fireEvent.change(screen.getByLabelText(/Dither strength/), { target: { value: "40" } });
+    fireEvent.change(screen.getByRole("slider", { name: /Dither strength/ }), { target: { value: "40" } });
     expect(state().ditherStrength).toBe(40);
   });
 
   test("background tolerance and colour only show when removing the background", () => {
     render(<Harness />);
-    expect(screen.queryByLabelText(/Tolerance/)).toBeNull();
+    expect(screen.queryByRole("slider", { name: /Tolerance/ })).toBeNull();
     fireEvent.click(screen.getByLabelText("Remove background"));
-    fireEvent.change(screen.getByLabelText(/Tolerance/), { target: { value: "30" } });
+    fireEvent.change(screen.getByRole("slider", { name: /Tolerance/ }), { target: { value: "30" } });
     expect(state()).toMatchObject({ removeBackground: true, bgTolerance: 30 });
     fireEvent.click(screen.getByText("Pick from image"));
     expect(screen.getByText("Click the image…")).toBeTruthy();
@@ -72,7 +72,7 @@ describe("ImageOptions", () => {
 
   test("cleanup slider describes the group size", () => {
     render(<Harness />);
-    const slider = screen.getByLabelText(/Remove stray beads/);
+    const slider = screen.getByRole("slider", { name: /Remove stray beads/ });
     fireEvent.change(slider, { target: { value: "1" } });
     expect(slider.closest(".field")!.textContent).toContain("single beads");
     fireEvent.change(slider, { target: { value: "3" } });

@@ -1393,3 +1393,49 @@ input[type="range"] {
   border-radius: 14px;
   text-align: center;
 }
+
+/* Slider with − / + buttons */
+.range-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.range-input input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  touch-action: manipulation; /* no double-tap zoom while tapping repeatedly */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.step-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+@media (pointer: coarse) {
+  .step-btn {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+.slider {
+  grid-template-columns: 76px minmax(0, 1fr) 36px;
+}

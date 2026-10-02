@@ -4,6 +4,7 @@ import type { BeadColor } from "../lib/palettes";
 import { DEFAULT_ADJUSTMENTS, type Adjustments, type DitherMode } from "../lib/pattern";
 import type { PipelineResult } from "../lib/pipeline";
 import type { SamplingMode } from "../lib/sampling";
+import { RangeInput } from "./RangeInput";
 import { Toggle } from "./Toggle";
 
 export interface ImageSettings {
@@ -68,6 +69,7 @@ function Range({
   value,
   min,
   max,
+  step = 1,
   onChange,
   format = String,
 }: {
@@ -76,6 +78,7 @@ function Range({
   value: number;
   min: number;
   max: number;
+  step?: number;
   onChange: (v: number) => void;
   format?: (v: number) => string;
 }) {
@@ -84,7 +87,7 @@ function Range({
       <label htmlFor={id}>
         {label} <span className="muted">{format(value)}</span>
       </label>
-      <input id={id} type="range" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <RangeInput id={id} label={label} value={value} min={min} max={max} step={step} onChange={onChange} />
     </div>
   );
 }
@@ -98,13 +101,16 @@ function Section({ title, children, open = false }: { title: string; children: R
   );
 }
 
+const ADJUST_STEP = 5;
+
 function Slider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  const id = `adjust-${label.toLowerCase()}`;
   return (
-    <label className="slider">
-      <span>{label}</span>
-      <input type="range" min={-100} max={100} value={value} onChange={(e) => onChange(Number(e.target.value))} />
-      <output>{value > 0 ? `+${value}` : value}</output>
-    </label>
+    <div className="slider">
+      <label htmlFor={id}>{label}</label>
+      <RangeInput id={id} label={label} value={value} min={-100} max={100} step={ADJUST_STEP} onChange={onChange} />
+      <output htmlFor={id}>{value > 0 ? `+${value}` : value}</output>
+    </div>
   );
 }
 
