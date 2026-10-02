@@ -103,7 +103,7 @@ describe("image option sliders have steppers", () => {
     const [s, setS] = useState<ImageSettings>({ ...DEFAULT_IMAGE_SETTINGS, removeBackground: true, dither: "ordered" });
     return (
       <>
-        <ImageOptions settings={s} onChange={setS} result={null} outlineColor={mard[0]!} onChooseOutline={() => {}} pickingBackground={false} onPickBackground={() => {}} />
+        <ImageOptions settings={s} onChange={setS} result={null} pickingBackground={false} onPickBackground={() => {}} />
         <pre data-testid="state">{JSON.stringify(s)}</pre>
       </>
     );

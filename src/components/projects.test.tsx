@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
-import { listProjects, loadProjectImage } from "../lib/projects";
+import { DEFAULT_IMAGE_SETTINGS } from "./ImageOptions";
+import { listProjects, loadProjectImage, saveProject } from "../lib/projects";
 import { mockPixels, PNG_DATA_URL } from "../test/canvas-mock";
 import { useInMemoryServer } from "../test/server-fetch";
 
@@ -135,6 +136,36 @@ describe("projects in the app", () => {
     expect(toast()).toBe("Opened “Berry”");
     await waitFor(() => expect(screen.queryByLabelText("Unsaved changes") === null).toBe(true));
     expect(screen.getByTitle("Saved").textContent).toBe("Berry");
+  });
+
+  test("an older project with the outline switched on opens with its outline drawn in as edits", async () => {
+    mockPixels(redSquare);
+    const { outlineMargin: _, ...image } = DEFAULT_IMAGE_SETTINGS;
+    await saveProject({
+      name: "Old outline",
+      image: png(),
+      imageName: "dog.png",
+      thumbnail: PNG_DATA_URL,
+      state: {
+        version: 1,
+        brandId: "mard-221",
+        width: 52,
+        boardSize: 26,
+        image: { ...image, removeBackground: true, outline: true } as never,
+        outlineId: null,
+        ownedOnly: false,
+        excluded: [],
+        swaps: [],
+        edits: { w: 0, h: 0, cells: [] },
+      },
+    });
+    render(<App />);
+    fireEvent.click(screen.getByText("Projects"));
+    fireEvent.click(await within(dialog()).findByRole("button", { name: "Open" }));
+    await waitFor(() => expect(screen.getByText(/beads edited by hand/)).toBeTruthy());
+    expect(pill()).toMatch(/· 2 colours$/);
+    fireEvent.click(screen.getByText("Edit beads"));
+    expect((screen.getByLabelText("Edge margin") as HTMLInputElement).checked).toBe(true);
   });
 
   test("a new image starts a new unsaved project", async () => {

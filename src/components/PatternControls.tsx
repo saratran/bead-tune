@@ -57,8 +57,11 @@ export function EditBar({
   onUndo: () => void;
   canClear: boolean;
   onClear: () => void;
-  /** Outline is drawn after hand edits, so it follows them; toggled here too. */
-  outline?: { on: boolean; color: BeadColor; onToggle: (on: boolean) => void; onChooseColor: () => void };
+  /**
+   * Adds a one-bead outline round the current shape as ordinary hand edits.
+   * `margin` keeps a bead of room at the grid's edges so the outline fits.
+   */
+  outline?: { color: BeadColor; onAdd: () => void; onChooseColor: () => void; margin: boolean; onMargin: (on: boolean) => void };
 }) {
   return (
     <div className="edit-bar">
@@ -81,13 +84,16 @@ export function EditBar({
       </button>
       {outline && (
         <span className="edit-outline">
-          <Toggle label="Outline" checked={outline.on} onChange={outline.onToggle} />
-          {outline.on && (
-            <button className="btn btn-ghost row" onClick={outline.onChooseColor} title="Outline colour" aria-label="Edit bar outline colour">
-              <span className="dot big" style={{ background: outline.color.hex }} />
-              {outline.color.code}
-            </button>
-          )}
+          <button className="btn btn-ghost" onClick={outline.onAdd} title="Add a one-bead outline round the shape as it is now (click again for a thicker one)">
+            Add outline
+          </button>
+          <button className="btn btn-ghost row" onClick={outline.onChooseColor} title="Outline colour" aria-label="Outline colour">
+            <span className="dot big" style={{ background: outline.color.hex }} />
+            {outline.color.code}
+          </button>
+          <span title="Keep one empty bead round the edges so the outline isn't cut off (rebuilds the pattern)">
+            <Toggle label="Edge margin" checked={outline.margin} onChange={outline.onMargin} />
+          </span>
         </span>
       )}
     </div>

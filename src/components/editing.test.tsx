@@ -8,7 +8,7 @@ import { DEFAULT_IMAGE_SETTINGS, ImageOptions, type ImageSettings } from "./Imag
 import { PatternView } from "./PatternView";
 
 describe("ImageOptions", () => {
-  function Harness(props: { initial?: Partial<ImageSettings>; onChooseOutline?: () => void; result?: Parameters<typeof ImageOptions>[0]["result"] }) {
+  function Harness(props: { initial?: Partial<ImageSettings>; result?: Parameters<typeof ImageOptions>[0]["result"] }) {
     const [s, setS] = useState<ImageSettings>({ ...DEFAULT_IMAGE_SETTINGS, ...props.initial });
     const [picking, setPicking] = useState(false);
     return (
@@ -17,8 +17,6 @@ describe("ImageOptions", () => {
           settings={s}
           onChange={setS}
           result={props.result ?? null}
-          outlineColor={mard[0]!}
-          onChooseOutline={props.onChooseOutline ?? (() => {})}
           pickingBackground={picking}
           onPickBackground={setPicking}
         />
@@ -80,14 +78,10 @@ describe("ImageOptions", () => {
     expect(state().cleanup).toBe(3);
   });
 
-  test("outline colour button appears when outline is on", () => {
-    const choose = mock();
-    render(<Harness onChooseOutline={choose} />);
-    expect(screen.queryByTitle("Outline colour")).toBeNull();
-    fireEvent.click(screen.getByLabelText("Outline"));
-    fireEvent.click(screen.getByTitle("Outline colour"));
-    expect(choose).toHaveBeenCalled();
-    expect(screen.getByText(/Outlines need empty space/)).toBeTruthy();
+  test("outline isn't an image option (it's an edit)", () => {
+    render(<Harness />);
+    expect(screen.queryByLabelText("Outline") === null).toBe(true);
+    expect(screen.queryByTitle("Outline colour") === null).toBe(true);
   });
 
   test("pixel art mode reports the detected grid or the fallback", () => {
@@ -189,10 +183,11 @@ describe("App with an image", () => {
     await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toMatch(/^5[0-2] × 5[0-2] beads/));
   });
 
-  test("outline adds a ring of the darkest colour", async () => {
+  test("Add outline adds a ring of the darkest colour", async () => {
     await loadSample();
     fireEvent.click(screen.getByLabelText("Remove background"));
-    fireEvent.click(screen.getByLabelText("Outline"));
+    fireEvent.click(screen.getByText("Edit beads"));
+    fireEvent.click(screen.getByText("Add outline"));
     await waitFor(() => expect(pill()).toMatch(/· 2 colours$/));
     const darkestCode = mard.reduce((a, b) => (b.lab[0] < a.lab[0] ? b : a)).code;
     expect(screen.getByTitle("Outline colour").textContent).toContain(darkestCode);
@@ -281,13 +276,18 @@ describe("App with an image", () => {
   });
 });
 
-describe("outline follows hand edits", () => {
+describe("outline as an edit", () => {
   const redSquare = (w: number, h: number) => {
     const data = new Uint8ClampedArray(w * h * 4);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const inside = x >= w / 4 && x < (3 * w) / 4 && y >= h / 4 && y < (3 * h) / 4;
       data.set(inside ? [200, 30, 40, 255] : [255, 255, 255, 255], (y * w + x) * 4);
     }
+    return data;
+  };
+  const solid = (w: number, h: number) => {
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) data.set([200, 30, 40, 255], i * 4);
     return data;
   };
   const darkest = mard.reduce((a, b) => (b.lab[0] < a.lab[0] ? b : a));
@@ -308,63 +308,85 @@ describe("outline follows hand edits", () => {
     fireEvent.pointerDown(canvas(), at(x, y));
     fireEvent.pointerUp(canvas(), at(x, y));
   };
+  const toast = () => document.querySelector(".toast")?.textContent ?? "";
 
-  async function setup() {
-    mockPixels(redSquare);
+  async function setup(pixels = redSquare, removeBackground = true) {
+    mockPixels(pixels);
     render(<App />);
     fireEvent.click(screen.getByText("Try a sample image"));
     await waitFor(() => expect(document.querySelector(".pattern-canvas")).toBeTruthy());
-    fireEvent.click(screen.getByLabelText("Remove background"));
-    fireEvent.click(screen.getByLabelText("Outline"));
-    await waitFor(() => expect(outlineCount()).toBeGreaterThan(0));
+    if (removeBackground) fireEvent.click(screen.getByLabelText("Remove background"));
     fireEvent.click(screen.getByText("Edit beads"));
   }
-
-  test("a bead painted outside the shape gets its own outline", async () => {
+  async function outlined() {
     await setup();
-    const before = outlineCount();
+    fireEvent.click(screen.getByText("Add outline"));
+    await waitFor(() => expect(outlineCount()).toBeGreaterThan(0));
+    return outlineCount();
+  }
+
+  test("the outline is ordinary hand edits, removed in one Undo", async () => {
+    const n = await outlined();
+    expect(toast()).toBe("Outline added");
+    expect(screen.getByText(`${n} beads edited by hand`)).toBeTruthy();
+    fireEvent.click(screen.getByText("Undo"));
+    await waitFor(() => expect(outlineCount()).toBe(0));
+    expect(screen.queryByText(/edited by hand/) === null).toBe(true);
+  });
+
+  test("erasing a bead at the shape's edge leaves it empty, and the outline stays put", async () => {
+    const n = await outlined();
+    let x = 0;
+    while (x < 52 && codeAt(x, 26) === null) x++;
+    expect(codeAt(x, 26)).toBe(darkest.code); // the outline…
+    expect(codeAt(x + 1, 26)).not.toBe(darkest.code); // …then the shape's edge
+    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
+    stroke(x + 1, 26);
+    await waitFor(() => expect(codeAt(x + 1, 26)).toBeNull());
+    expect(outlineCount()).toBe(n);
+    // Outline beads can be erased like any other.
+    stroke(x, 26);
+    await waitFor(() => expect(codeAt(x, 26)).toBeNull());
+    expect(outlineCount()).toBe(n - 1);
+  });
+
+  test("beads painted after the outline don't get outlined; adding again outlines the new shape", async () => {
+    const n = await outlined();
     fireEvent.click(screen.getByRole("radio", { name: "Pick colour" }));
     stroke(26, 26); // pick the red
     stroke(4, 4); // paint far outside the shape
-    await waitFor(() => expect(outlineCount()).toBe(before + 8));
-    expect(codeAt(3, 3)).toBe(darkest.code);
+    await waitFor(() => expect(codeAt(4, 4)).not.toBeNull());
+    expect(codeAt(3, 3)).toBeNull();
+    fireEvent.click(screen.getByText("Add outline"));
+    await waitFor(() => expect(codeAt(3, 3)).toBe(darkest.code));
+    expect(outlineCount()).toBeGreaterThan(n + 8); // the bead's ring plus a second ring round the shape
   });
 
-  test("an erased bead inside the shape stays empty (not filled with outline)", async () => {
-    await setup();
-    const before = outlineCount();
-    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
-    stroke(26, 26);
-    await waitFor(() => expect(codeAt(26, 26)).toBeNull());
-    expect(outlineCount()).toBe(before);
+  test("with no room round the shape, Edge margin makes room", async () => {
+    await setup(solid, false);
+    fireEvent.click(screen.getByText("Add outline"));
+    expect(toast()).toContain("Nothing to outline");
+    fireEvent.click(screen.getByLabelText("Edge margin"));
+    await waitFor(() => expect(codeAt(0, 0)).toBeNull());
+    fireEvent.click(screen.getByText("Add outline"));
+    await waitFor(() => expect(outlineCount()).toBe(2 * 52 + 2 * 50));
   });
 
-  test("outline beads can be erased or recoloured by hand, and undo puts them back", async () => {
-    await setup();
-    // Find an outline bead along row 26.
-    let x = 0;
-    while (x < 52 && codeAt(x, 26) !== darkest.code) x++;
-    expect(x).toBeLessThan(52);
-    const before = outlineCount();
-    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
-    stroke(x, 26);
-    await waitFor(() => expect(codeAt(x, 26)).toBeNull());
-    expect(outlineCount()).toBe(before - 1);
-    expect(screen.getByText("1 bead edited by hand")).toBeTruthy();
-
-    fireEvent.click(screen.getByText("Undo"));
-    await waitFor(() => expect(codeAt(x, 26)).toBe(darkest.code));
-  });
-
-  test("the edit bar's Outline switch is the same setting as the sidebar's", async () => {
-    await setup();
-    const bar = document.querySelector(".edit-bar") as HTMLElement;
-    const barToggle = within(bar).getByLabelText("Outline") as HTMLInputElement;
-    expect(barToggle.checked).toBe(true);
-    fireEvent.click(barToggle);
-    await waitFor(() => expect(outlineCount()).toBe(0));
-    const sidebarToggle = screen.getAllByLabelText("Outline").find((el) => !bar.contains(el)) as HTMLInputElement;
-    expect(sidebarToggle.checked).toBe(false);
+  test("warns when the outline is cut off at the edge", async () => {
+    const disc = (w: number, h: number) => {
+      const data = new Uint8ClampedArray(w * h * 4);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const inside = (x - w / 2) ** 2 + (y - h / 2) ** 2 < (w / 4) ** 2;
+        data.set(inside ? [200, 30, 40, 255] : [255, 255, 255, 255], (y * w + x) * 4);
+      }
+      return data;
+    };
+    await setup(disc);
+    fireEvent.click(screen.getByLabelText("Trim empty space"));
+    // (The canvas mock redraws the whole disc for the trimmed area, so the size wobbles a bead.)
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toMatch(/^5\d × 5\d beads/));
+    fireEvent.click(screen.getByText("Add outline"));
+    expect(toast()).toContain("cut off");
   });
 });
 
@@ -431,10 +453,15 @@ describe("warning before settings change hand edits", () => {
     expect(prompt()).toBeTruthy(); // …asks again
   });
 
-  test("outline and display options don't ask (they don't move beads)", async () => {
+  test("display options don't ask (they don't move beads)", async () => {
     await withEdit();
-    fireEvent.click(screen.getAllByLabelText("Outline")[0]!);
     fireEvent.click(screen.getByLabelText("Codes"));
     expect(prompt() === null).toBe(true);
+  });
+
+  test("Edge margin asks (it rebuilds the pattern)", async () => {
+    await withEdit();
+    fireEvent.click(screen.getByLabelText("Edge margin"));
+    expect(prompt()).toBeTruthy();
   });
 });

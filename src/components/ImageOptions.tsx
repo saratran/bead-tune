@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { rgbToHex, type ColorMetric, type RGB } from "../lib/color";
-import type { BeadColor } from "../lib/palettes";
 import { DEFAULT_ADJUSTMENTS, type Adjustments, type DitherMode } from "../lib/pattern";
 import type { PipelineResult } from "../lib/pipeline";
 import type { SamplingMode } from "../lib/sampling";
@@ -20,7 +19,8 @@ export interface ImageSettings {
   dither: DitherMode;
   ditherStrength: number;
   cleanup: number;
-  outline: boolean;
+  /** Keep a one-bead empty margin round the pattern, so an outline added later fits. */
+  outlineMargin: boolean;
   adjustments: Adjustments;
 }
 
@@ -37,7 +37,7 @@ export const DEFAULT_IMAGE_SETTINGS: ImageSettings = {
   dither: "none",
   ditherStrength: 85,
   cleanup: 0,
-  outline: false,
+  outlineMargin: false,
   adjustments: DEFAULT_ADJUSTMENTS,
 };
 
@@ -45,8 +45,6 @@ interface Props {
   settings: ImageSettings;
   onChange: (s: ImageSettings) => void;
   result: PipelineResult | null;
-  outlineColor: BeadColor;
-  onChooseOutline: () => void;
   pickingBackground: boolean;
   onPickBackground: (picking: boolean) => void;
 }
@@ -118,7 +116,7 @@ const SAMPLING_HINTS: Record<SamplingMode, string> = {
   pixelart: "Uses the exact pixels of enlarged pixel art.",
 };
 
-export function ImageOptions({ settings: s, onChange, result, outlineColor, onChooseOutline, pickingBackground, onPickBackground }: Props) {
+export function ImageOptions({ settings: s, onChange, result, pickingBackground, onPickBackground }: Props) {
   const set = <K extends keyof ImageSettings>(key: K, value: ImageSettings[K]) => onChange({ ...s, [key]: value });
   const setAdj = (key: keyof Adjustments, v: number) => set("adjustments", { ...s.adjustments, [key]: v });
   const grid = result?.pixelGrid;
@@ -238,16 +236,6 @@ export function ImageOptions({ settings: s, onChange, result, outlineColor, onCh
           onChange={(v) => set("cleanup", v)}
           format={(v) => (v === 0 ? "off" : v === 1 ? "single beads" : `groups up to ${v}`)}
         />
-        <div className="toggle-row">
-          <Toggle label="Outline" checked={s.outline} onChange={(v) => set("outline", v)} />
-          {s.outline && (
-            <button className="link-btn row" onClick={onChooseOutline} title="Outline colour">
-              <span className="dot big" style={{ background: outlineColor.hex }} />
-              {outlineColor.code}
-            </button>
-          )}
-        </div>
-        {s.outline && !s.removeBackground && <p className="hint">Outlines need empty space around the subject — turn on Remove background.</p>}
       </Section>
     </div>
   );

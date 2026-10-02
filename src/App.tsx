@@ -11,7 +11,7 @@ import { effortCost, featureCost, likenessCost, makeEvaluator, type Candidate, t
 import { imageFingerprint, loadBookmarks, mergeBookmarks, sameCandidate, saveBookmarks, type Bookmark } from "./lib/bookmarks";
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
-import { addOutline, applyEdits, type Edits } from "./lib/cleanup";
+import { applyEdits, outlineRing, type Edits } from "./lib/cleanup";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
 import { applySwaps, type Pattern } from "./lib/pattern";
 import { buildPattern, type PipelineSettings } from "./lib/pipeline";
@@ -171,11 +171,9 @@ export function App() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
 
-  // Hand edits, keyed by cell index for a pattern of size `w` × `h`.
-  // Hand edits: `map` applies before the outline (so painted beads get outlined),
-  // `over` holds edits made on outline beads themselves and applies after it.
-  const [edits, setEdits] = useState<{ w: number; h: number; map: Edits; over: Edits }>({ w: 0, h: 0, map: new Map(), over: new Map() });
-  const [undoStack, setUndoStack] = useState<{ map: Edits; over: Edits }[]>([]);
+  // Hand edits (including added outlines), keyed by cell index for a pattern of size `w` × `h`.
+  const [edits, setEdits] = useState<{ w: number; h: number; map: Edits }>({ w: 0, h: 0, map: new Map() });
+  const [undoStack, setUndoStack] = useState<Edits[]>([]);
   const [tool, setTool] = useState<EditTool | null>(null);
   const [brush, setBrush] = useState<BeadColor | null>(null);
 
@@ -190,7 +188,7 @@ export function App() {
 
   const clearHandEdits = useCallback(() => {
     setEditsAck(false);
-    setEdits({ w: 0, h: 0, map: new Map(), over: new Map() });
+    setEdits({ w: 0, h: 0, map: new Map() });
     setUndoStack([]);
   }, []);
 
@@ -246,7 +244,7 @@ export function App() {
 
   const pipelineSettings = useCallback(
     (settings: ImageSettings, w: number): PipelineSettings => {
-      const { sampling, denoise, trim, cleanup, outline, ...options } = settings;
+      const { sampling, denoise, trim, cleanup, outlineMargin, ...options } = settings;
       return {
         width: Math.max(2, Math.min(300, w || 1)),
         crop,
@@ -254,16 +252,17 @@ export function App() {
         denoise,
         trim,
         cleanup,
-        outline: outline ? outlineColor : null,
+        // Outlines are added by hand (Edit → Add outline); the pipeline only keeps room for one.
+        outline: null,
+        reserveOutline: outlineMargin,
         options: { ...options, palette },
       };
     },
-    [crop, outlineColor, palette],
+    [crop, palette],
   );
 
-  // The outline is added last, after swaps and hand edits; the pipeline only keeps room for it.
   const result = useMemo(
-    () => (source ? buildPattern(source, { ...pipelineSettings(dSettings, dWidth), outline: null, reserveOutline: dSettings.outline }) : null),
+    () => (source ? buildPattern(source, pipelineSettings(dSettings, dWidth)) : null),
     [source, dSettings, dWidth, pipelineSettings],
   );
 
@@ -291,8 +290,8 @@ export function App() {
   };
   const autoKey = useMemo(() => {
     const { sampling, denoise, cleanup, maxColors, minBeads, metric, dither, ditherStrength, adjustments, ...fixed } = imageSettings;
-    return JSON.stringify({ image: image ? imageId(image) : 0, brandId, width, crop, ownedOnly, excluded: [...excluded], outlineColor: outlineColor.id, fixed });
-  }, [image, brandId, width, crop, ownedOnly, excluded, outlineColor, imageSettings]);
+    return JSON.stringify({ image: image ? imageId(image) : 0, brandId, width, crop, ownedOnly, excluded: [...excluded], fixed });
+  }, [image, brandId, width, crop, ownedOnly, excluded, imageSettings]);
 
   const applySuggestion = (sg: { label: string; candidate: Candidate }) => {
     const c = sg.candidate;
@@ -318,17 +317,26 @@ export function App() {
   // aside (not lost) while the size differs, and replaced by the next stroke.
   const editsFit = swapped && edits.w === swapped.width && edits.h === swapped.height;
 
-  const editedPattern = useMemo(() => (swapped && editsFit ? applyEdits(swapped, edits.map) : swapped), [swapped, editsFit, edits]);
-  const outlineOn = dSettings.outline;
-  const { pattern, outlineCells } = useMemo(() => {
-    if (!editedPattern) return { pattern: null, outlineCells: new Set<number>() };
-    if (!outlineOn) return { pattern: editsFit && edits.over.size ? applyEdits(editedPattern, edits.over) : editedPattern, outlineCells: new Set<number>() };
-    const outlined = addOutline(editedPattern, outlineColor);
-    const cells = new Set<number>();
-    for (let i = 0; i < outlined.cells.length; i++) if (editedPattern.cells[i]! < 0 && outlined.cells[i]! >= 0) cells.add(i);
-    return { pattern: editsFit && edits.over.size ? applyEdits(outlined, edits.over) : outlined, outlineCells: cells };
-  }, [editedPattern, outlineOn, outlineColor, editsFit, edits]);
-  const handEditCount = editsFit ? edits.map.size + edits.over.size : 0;
+  const pattern = useMemo(() => (swapped && editsFit ? applyEdits(swapped, edits.map) : swapped), [swapped, editsFit, edits]);
+  const handEditCount = editsFit ? edits.map.size : 0;
+
+  // An older project with a live outline: once its pattern is rebuilt, draw the
+  // outline in as hand edits, then reapply the edits it had on outline beads.
+  const pendingOutline = useRef<{ w: number; h: number; over: Edits } | null>(null);
+  useEffect(() => {
+    const p = pendingOutline.current;
+    if (!p || !pattern || dSettings !== imageSettings || dWidth !== width) return;
+    // Edits saved for another size were set aside anyway.
+    const fits = pattern.width === p.w && pattern.height === p.h;
+    pendingOutline.current = null;
+    const ring = outlineRing(pattern).cells;
+    setEdits((prev) => {
+      const map = new Map(fits ? prev.map : undefined);
+      for (const i of ring) map.set(i, outlineColor);
+      if (fits) for (const [i, c] of p.over) map.set(i, c);
+      return { w: pattern.width, h: pattern.height, map };
+    });
+  }, [pattern, dSettings, imageSettings, dWidth, width, outlineColor]);
 
   // Settings that rebuild the pattern can leave hand edits misaligned or set aside:
   // ask first. "Change anyway" isn't asked again until the next brush stroke.
@@ -338,13 +346,7 @@ export function App() {
     if (handEditCount === 0 || editsAck) apply();
     else setEditsPrompt(() => apply);
   };
-  /** Image options, except outline-only changes (the outline follows edits). */
-  const changeImageSettings = (next: ImageSettings) => {
-    const { outline: _a, ...before } = imageSettings;
-    const { outline: _b, ...after } = next;
-    if (JSON.stringify(before) === JSON.stringify(after)) setImageSettings(next);
-    else guardEdits(() => setImageSettings(next));
-  };
+  const changeImageSettings = (next: ImageSettings) => guardEdits(() => setImageSettings(next));
 
   const onEdit = (index: number, phase: "start" | "move") => {
     if (!pattern) return;
@@ -361,26 +363,42 @@ export function App() {
     if (phase === "start") {
       setEditsAck(false);
       // One undo step per stroke.
-      const snapshot = editsFit ? { map: edits.map, over: edits.over } : { map: new Map(), over: new Map() };
-      setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), snapshot]);
+      pushUndo();
     }
-    // Edits on outline beads recolour/remove that outline bead; others change the shape.
-    const onOutline = outlineCells.has(index) || (editsFit && edits.over.has(index));
     setEdits((prev) => {
       const fits = prev.w === pattern.width && prev.h === pattern.height;
       const map = new Map(fits ? prev.map : undefined);
-      const over = new Map(fits ? prev.over : undefined);
-      if (onOutline) over.set(index, value);
-      else map.set(index, value);
-      return { w: pattern.width, h: pattern.height, map, over };
+      map.set(index, value);
+      return { w: pattern.width, h: pattern.height, map };
     });
+  };
+
+  const pushUndo = () => setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), editsFit ? edits.map : new Map()]);
+
+  /** Adds a one-bead outline round the shape as it is now, as hand edits (one undo step). */
+  const addOutlineNow = () => {
+    if (!pattern) return;
+    const ring = outlineRing(pattern);
+    if (!ring.cells.length) {
+      setNotice({ text: "Nothing to outline: there's no empty space round the shape. Turn on Edge margin or Remove background.", error: true });
+      return;
+    }
+    setEditsAck(false);
+    pushUndo();
+    setEdits((prev) => {
+      const fits = prev.w === pattern.width && prev.h === pattern.height;
+      const map = new Map(fits ? prev.map : undefined);
+      for (const i of ring.cells) map.set(i, outlineColor);
+      return { w: pattern.width, h: pattern.height, map };
+    });
+    setNotice({ text: ring.clipped && !imageSettings.outlineMargin ? "Outline added. It's cut off where the shape touches the edge: turn on Edge margin to leave room." : "Outline added" });
   };
 
   const undo = () => {
     const prev = undoStack[undoStack.length - 1];
     if (!prev) return;
     setUndoStack(undoStack.slice(0, -1));
-    setEdits((e) => ({ ...e, map: prev.map, over: prev.over }));
+    setEdits((e) => ({ ...e, map: prev }));
   };
 
   /** Eyedropper on the source thumbnail: sample the clicked pixel as the background colour. */
@@ -447,7 +465,6 @@ export function App() {
         w: edits.w,
         h: edits.h,
         cells: [...edits.map].map(([i, c]) => [i, c?.id ?? null]),
-        outlineCells: [...edits.over].map(([i, c]) => [i, c?.id ?? null]),
       },
       bookmarks,
     }),
@@ -456,7 +473,7 @@ export function App() {
   const projectJson = useMemo(() => JSON.stringify(projectState), [projectState]);
   const dirty = !!project && projectJson !== savedJson;
   // Work that would be lost: changes to an open project, or hand/colour edits on an unsaved image.
-  const unsavedWork = project ? dirty : !!image && (edits.map.size > 0 || edits.over.size > 0 || swaps.size > 0 || excluded.size > 0);
+  const unsavedWork = project ? dirty : !!image && (edits.map.size > 0 || swaps.size > 0 || excluded.size > 0);
 
   /** Asks before replacing unsaved work; resolves true to go ahead. */
   const confirmDiscard = (): Promise<boolean> =>
@@ -546,7 +563,9 @@ export function App() {
     setBrandId(b.id);
     setWidth(st.width);
     setBoardInput(st.boardSize);
-    setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...st.image });
+    // Projects from before outlines were an edit had a live "outline" setting: keep its margin, and redraw it once.
+    const { outline: liveOutline, ...savedImage } = st.image as ImageSettings & { outline?: boolean };
+    setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...savedImage, ...(liveOutline ? { outlineMargin: true } : {}) });
     setCrop(st.crop ?? FULL_CROP);
     pendingBookmarks.current = st.bookmarks ?? null;
     setOutlineId(st.outlineId);
@@ -555,7 +574,8 @@ export function App() {
     setSwaps(new Map(st.swaps.flatMap(([from, to]) => (byId.has(to) ? [[from, byId.get(to)!] as const] : []))));
     const restore = (cells: [number, string | null][] = []) =>
       new Map(cells.flatMap(([i, id]): [number, BeadColor | null][] => (id === null ? [[i, null]] : byId.has(id) ? [[i, byId.get(id)!]] : [])));
-    setEdits({ w: st.edits.w, h: st.edits.h, map: restore(st.edits.cells), over: restore(st.edits.outlineCells) });
+    setEdits({ w: st.edits.w, h: st.edits.h, map: restore(st.edits.cells) });
+    pendingOutline.current = liveOutline ? { w: st.edits.w, h: st.edits.h, over: restore(st.edits.outlineCells) } : null;
     setUndoStack([]);
     setHighlightId(null);
     setTool(null);
@@ -646,10 +666,11 @@ export function App() {
       onUndo={undo}
       canClear={handEditCount > 0}
       outline={{
-        on: imageSettings.outline,
         color: outlineColor,
-        onToggle: (on) => setImageSettings({ ...imageSettings, outline: on }),
+        onAdd: addOutlineNow,
         onChooseColor: () => setModal({ kind: "outline" }),
+        margin: imageSettings.outlineMargin,
+        onMargin: (on) => changeImageSettings({ ...imageSettings, outlineMargin: on }),
       }}
       onClear={clearHandEdits}
     />
@@ -892,8 +913,6 @@ export function App() {
             settings={imageSettings}
             onChange={changeImageSettings}
             result={result}
-            outlineColor={outlineColor}
-            onChooseOutline={() => setModal({ kind: "outline" })}
             pickingBackground={pickingBg}
             onPickBackground={setPickingBg}
           />

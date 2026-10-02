@@ -154,21 +154,20 @@ export function exteriorCells(p: Pattern): Uint8Array {
 }
 
 /**
- * Fills every *outside* empty cell that touches a bead (including diagonally)
- * with `color`. Holes inside the shape — e.g. beads erased by hand — stay empty.
+ * Where a one-bead outline goes: every *outside* empty cell that touches a bead
+ * (including diagonally). Holes inside the shape are left alone. `clipped` is
+ * true when beads touch the grid's edge, so the outline can't go all the way round.
  */
-export function addOutline(p: Pattern, color: BeadColor): Pattern {
+export function outlineRing(p: Pattern): { cells: number[]; clipped: boolean } {
   const { width: w, height: h } = p;
-  const { raw, palette } = editable(p);
-  let outline = palette.findIndex((c) => c.id === color.id);
-  if (outline < 0) {
-    outline = palette.length;
-    palette.push(color);
-  }
   const outside = exteriorCells(p);
+  const cells: number[] = [];
+  let clipped = false;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      if (!outside[y * w + x]) continue;
+      const i = y * w + x;
+      if (p.cells[i] !== EMPTY && (x === 0 || y === 0 || x === w - 1 || y === h - 1)) clipped = true;
+      if (!outside[i]) continue;
       let touches = false;
       for (let dy = -1; dy <= 1 && !touches; dy++) {
         for (let dx = -1; dx <= 1 && !touches; dx++) {
@@ -177,10 +176,15 @@ export function addOutline(p: Pattern, color: BeadColor): Pattern {
           touches = xx >= 0 && yy >= 0 && xx < w && yy < h && p.cells[yy * w + xx] !== EMPTY;
         }
       }
-      if (touches) raw[y * w + x] = outline;
+      if (touches) cells.push(i);
     }
   }
-  return fromIndices(w, h, raw, palette);
+  return { cells, clipped };
+}
+
+/** Draws a one-bead outline of `color` around the shape (see `outlineRing`). */
+export function addOutline(p: Pattern, color: BeadColor): Pattern {
+  return applyEdits(p, new Map(outlineRing(p).cells.map((i) => [i, color])));
 }
 
 /** Hand edits: cell index → colour to paint, or null to remove the bead. */
