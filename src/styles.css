@@ -1097,3 +1097,104 @@ input[type="range"] {
     gap: 8px;
   }
 }
+
+/* Fullscreen viewer/editor */
+.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 15; /* above the page, below dialogs and toasts */
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+}
+
+.fs-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.fs-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.fs-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen .edit-bar {
+  margin-bottom: 0;
+}
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.zoom .btn {
+  padding: 6px 12px;
+}
+
+.zoom-level {
+  min-width: 48px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pattern-view.is-fullscreen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pattern-view.is-fullscreen .pattern-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  align-items: center;
+  align-items: safe center;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+/* The viewer handles touch itself: drag pans (or paints), two fingers pinch-zoom. */
+.pattern-view.is-fullscreen .pattern-canvas {
+  touch-action: none;
+}
+
+.pattern-canvas.pannable {
+  cursor: grab;
+}
+
+.pattern-canvas.pannable:active {
+  cursor: grabbing;
+}
+
+/* Dialogs and toasts sit above the fullscreen viewer. */
+.modal-backdrop {
+  z-index: 30;
+}
+
+.toast {
+  z-index: 40;
+}
+
+.confirm-modal {
+  width: min(460px, 100%);
+}
+
+.confirm-text {
+  margin: 0;
+  padding: 14px 18px 4px;
+}

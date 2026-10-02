@@ -122,6 +122,9 @@ describe("projects in the app", () => {
     // Open it again.
     fireEvent.click(screen.getByText("Projects"));
     fireEvent.click(await within(dialog()).findByRole("button", { name: "Open" }));
+    // The project has unsaved changes (Smooth, width 104), so we're asked first.
+    const prompt = await screen.findByRole("alertdialog", { name: "Unsaved changes" });
+    fireEvent.click(within(prompt).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByRole("dialog") === null).toBe(true));
     await waitFor(() => expect(pill()).toBe("2,703 beads · 2 colours"));
     expect(screen.getByRole("radio", { name: "Sharp" }).getAttribute("aria-checked")).toBe("true");

@@ -8,7 +8,8 @@ interface Props {
   canSave: boolean;
   defaultName: string;
   onSave: (name: string, asNew: boolean) => Promise<void>;
-  onOpen: (project: ProjectMeta) => Promise<void>;
+  /** Resolves false if opening was cancelled (e.g. to keep unsaved changes). */
+  onOpen: (project: ProjectMeta) => Promise<boolean>;
   /** Called after the open project is renamed or deleted. */
   onCurrentChanged: (project: { id: string; name: string } | null) => void;
   onClose: () => void;
@@ -176,8 +177,7 @@ export function ProjectsDialog({ current, canSave, defaultName, onSave, onOpen, 
                           disabled={busy}
                           onClick={() =>
                             run(async () => {
-                              await onOpen(p);
-                              onClose();
+                              if (await onOpen(p)) onClose();
                             })
                           }
                         >

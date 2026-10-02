@@ -12,10 +12,10 @@ import { buildPattern } from "./lib/pipeline";
 import { loadProjectImage, requestPersistentStorage, saveProject, type ProjectMeta, type ProjectState } from "./lib/projects";
 import { canvasSource } from "./lib/sampling";
 import { ExportDialog } from "./components/ExportDialog";
-import { ShapePicker } from "./components/ShapePicker";
+import { DisplayControls, EditBar, type DisplaySettings } from "./components/PatternControls";
 import { Toggle } from "./components/Toggle";
 import { DEFAULT_EXPORT, type ExportSettings } from "./lib/export";
-import { drawPattern, type CellShape } from "./lib/render";
+import { drawPattern } from "./lib/render";
 import { makeSampleImage } from "./lib/sample";
 
 const WIDTH_PRESETS = [52, 78, 104];
@@ -23,11 +23,6 @@ const OWNED_KEY = "bead-pattern:owned";
 const THEME_KEY = "bead-pattern:theme";
 const DISPLAY_KEY = "bead-pattern:display";
 const EXPORT_KEY = "bead-pattern:export";
-
-interface DisplaySettings {
-  shape: CellShape;
-  codes: boolean;
-}
 
 const DEFAULT_DISPLAY: DisplaySettings = { shape: "square", codes: false };
 
@@ -131,6 +126,10 @@ export function App() {
   const [savedJson, setSavedJson] = useState<string | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  // Resolves the pending "discard unsaved changes?" question.
+  const [discardPrompt, setDiscardPrompt] = useState<((proceed: boolean) => void) | null>(null);
   // Set when a project was just opened: the next state snapshot is its "saved" state.
   const markSaved = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -205,17 +204,15 @@ export function App() {
     [resetEdits, clearHandEdits],
   );
 
-  const onFile = useCallback(
-    async (file: File) => {
-      try {
-        setError(null);
-        startImage(await loadImage(file), file, file.name.replace(/\.[^.]+$/, "") || "pattern");
-      } catch (e) {
-        setError((e as Error).message);
-      }
-    },
-    [startImage],
-  );
+  const onFile = async (file: File) => {
+    if (!(await confirmDiscard())) return;
+    try {
+      setError(null);
+      startImage(await loadImage(file), file, file.name.replace(/\.[^.]+$/, "") || "pattern");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   const changeBrand = (id: string) => {
     setBrandId(id);
@@ -356,6 +353,45 @@ export function App() {
   );
   const projectJson = useMemo(() => JSON.stringify(projectState), [projectState]);
   const dirty = !!project && projectJson !== savedJson;
+  // Work that would be lost: changes to an open project, or hand/colour edits on an unsaved image.
+  const unsavedWork = project ? dirty : !!image && (edits.map.size > 0 || swaps.size > 0 || excluded.size > 0);
+
+  /** Asks before replacing unsaved work; resolves true to go ahead. */
+  const confirmDiscard = (): Promise<boolean> =>
+    unsavedWork ? new Promise((resolve) => setDiscardPrompt(() => resolve)) : Promise.resolve(true);
+
+  const answerDiscard = async (choice: "save" | "discard" | "cancel") => {
+    const resolve = discardPrompt;
+    setDiscardPrompt(null);
+    if (!resolve) return;
+    if (choice === "save") {
+      if (!project) {
+        // Needs a name first: open the save dialog and stop here.
+        resolve(false);
+        setProjectsOpen(true);
+        return;
+      }
+      try {
+        await save(project.name);
+      } catch (e) {
+        setError((e as Error).message);
+        resolve(false);
+        return;
+      }
+    }
+    resolve(choice !== "cancel");
+  };
+
+  // The browser's own "leave site?" warning while there's unsaved work.
+  useEffect(() => {
+    if (!unsavedWork) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [unsavedWork]);
 
   useEffect(() => {
     if (!markSaved.current) return;
@@ -390,7 +426,9 @@ export function App() {
     else setProjectsOpen(true);
   };
 
-  const openProject = async (meta: ProjectMeta) => {
+  /** Returns false if the user chose to keep their unsaved work instead. */
+  const openProject = async (meta: ProjectMeta): Promise<boolean> => {
+    if (!(await confirmDiscard())) return false;
     const blob = await loadProjectImage(meta.id);
     if (!blob) throw new Error("This project's image is missing.");
     const img = await loadImage(blob);
@@ -423,7 +461,59 @@ export function App() {
     setProject({ id: meta.id, name: meta.name });
     markSaved.current = true;
     setNotice(`Opened “${meta.name}”`);
+    return true;
   };
+
+  const clampZoom = (z: number) => Math.min(8, Math.max(1, z));
+  const zoomBy = useCallback((factor: number) => setZoom((z) => clampZoom(z * factor)), []);
+
+  const enterFullscreen = () => {
+    setZoom(1);
+    setFullscreen(true);
+    // Real fullscreen where supported (not on iPhone); the overlay covers the window either way.
+    // The whole page goes fullscreen so dialogs (brush colour etc.) still show on top.
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  };
+
+  const exitFullscreen = useCallback(() => {
+    setFullscreen(false);
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  }, []);
+
+  // Leaving browser fullscreen (e.g. its own Esc handling) also closes the overlay.
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setFullscreen(false);
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // Fullscreen keys: Esc exits, + / − / 0 zoom, Ctrl/⌘+Z undoes. Ignored while typing or in a dialog.
+  const undoRef = useRef(() => {});
+  useEffect(() => {
+    if (!fullscreen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      // Key events can target the window itself, which has no closest().
+      const typing = e.target instanceof Element && e.target.closest("input, textarea, select");
+      if (typing || document.querySelector(".modal-backdrop")) return;
+      if (e.key === "Escape") exitFullscreen();
+      else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoRef.current();
+      } else if (e.metaKey || e.ctrlKey || e.altKey) return;
+      else if (e.key === "+" || e.key === "=") zoomBy(1.25);
+      else if (e.key === "-" || e.key === "_") zoomBy(1 / 1.25);
+      else if (e.key === "0") setZoom(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [fullscreen, exitFullscreen, zoomBy]);
 
   // Ctrl/⌘+S saves the open project (or opens the save dialog).
   const quickSaveRef = useRef(quickSave);
@@ -438,6 +528,21 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  undoRef.current = undo;
+  const brushOrDefault = brush ?? pattern?.colors[0] ?? null;
+  const editBar = tool && (
+    <EditBar
+      tool={tool}
+      onTool={setTool}
+      brush={brushOrDefault}
+      onChooseBrush={() => setModal({ kind: "brush" })}
+      canUndo={undoStack.length > 0}
+      onUndo={undo}
+      canClear={!!editsFit && edits.map.size > 0}
+      onClear={clearHandEdits}
+    />
+  );
 
   const edited = excluded.size > 0 || swaps.size > 0;
   const ownedEmpty = ownedOnly && ownedSet.size === 0;
@@ -587,9 +692,10 @@ export function App() {
             <div className="card-head">
               <h2>Pattern</h2>
               <div className="actions">
-                <ShapePicker value={display.shape} onChange={(shape) => setDisplay({ ...display, shape })} />
-                <Toggle label="Codes" checked={display.codes} onChange={(codes) => setDisplay({ ...display, codes })} />
-                <Toggle label="Board lines" checked={showBoards} onChange={setShowBoards} />
+                <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} />
+                <button className="btn btn-ghost" disabled={!pattern?.total} onClick={enterFullscreen} title="View and edit fullscreen">
+                  ⤢ Fullscreen
+                </button>
                 <button
                   className={`btn ${tool ? "btn-primary" : "btn-ghost"}`}
                   aria-pressed={!!tool}
@@ -603,27 +709,7 @@ export function App() {
                 </button>
               </div>
             </div>
-            {tool && pattern && (
-              <div className="edit-bar">
-                <div className="segmented" role="radiogroup" aria-label="Edit tool">
-                  {(["paint", "erase", "pick"] as const).map((t) => (
-                    <button key={t} role="radio" aria-checked={tool === t} className={tool === t ? "on" : ""} onClick={() => setTool(t)}>
-                      {{ paint: "Paint", erase: "Erase", pick: "Pick colour" }[t]}
-                    </button>
-                  ))}
-                </div>
-                <button className="btn btn-ghost row" onClick={() => setModal({ kind: "brush" })} title="Brush colour">
-                  <span className="dot big" style={{ background: (brush ?? pattern.colors[0])?.hex }} />
-                  {brush ? colorLabel(brush) : pattern.colors[0] ? colorLabel(pattern.colors[0]) : "Colour"}
-                </button>
-                <button className="btn btn-ghost" disabled={undoStack.length === 0} onClick={undo}>
-                  Undo
-                </button>
-                <button className="btn btn-ghost" disabled={!editsFit || edits.map.size === 0} onClick={clearHandEdits}>
-                  Clear edits
-                </button>
-              </div>
-            )}
+            {tool && pattern && !fullscreen && editBar}
             {pattern && pattern.total > 0 ? (
               <PatternView
                 pattern={pattern}
@@ -682,6 +768,61 @@ export function App() {
         Colours on screen are approximate — check against your actual beads. Colour data from maxcleme/beadcolors (MIT). Images are processed locally and never uploaded.
       </footer>
 
+      {fullscreen && pattern && (
+        <div className="fullscreen" role="dialog" aria-modal="true" aria-label="Fullscreen pattern">
+          <div className="fs-bar">
+            <div className="fs-title">
+              <strong>{project?.name ?? "Pattern"}</strong>
+              <span className="muted small">
+                {pattern.width} × {pattern.height} · {pattern.total.toLocaleString()} beads
+              </span>
+            </div>
+            <div className="actions">
+              <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} />
+              <div className="zoom" role="group" aria-label="Zoom">
+                <button className="btn btn-ghost" onClick={() => zoomBy(1 / 1.25)} disabled={zoom <= 1} aria-label="Zoom out">
+                  −
+                </button>
+                <span className="zoom-level" aria-live="polite">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button className="btn btn-ghost" onClick={() => zoomBy(1.25)} disabled={zoom >= 8} aria-label="Zoom in">
+                  +
+                </button>
+                <button className="btn btn-ghost" onClick={() => setZoom(1)} disabled={zoom === 1}>
+                  Fit
+                </button>
+              </div>
+              <button
+                className={`btn ${tool ? "btn-primary" : "btn-ghost"}`}
+                aria-pressed={!!tool}
+                onClick={() => setTool(tool ? null : "paint")}
+              >
+                {tool ? "Done editing" : "Edit beads"}
+              </button>
+              <button className="btn btn-primary" onClick={exitFullscreen} aria-label="Exit fullscreen">
+                ✕ Exit
+              </button>
+            </div>
+          </div>
+          {editBar}
+          <PatternView
+            pattern={pattern}
+            boardSize={boardSize}
+            showBoards={showBoards}
+            highlightId={highlightId}
+            theme={theme}
+            shape={display.shape}
+            codes={display.codes}
+            tool={tool}
+            onEdit={onEdit}
+            onPickColor={setHighlightId}
+            fullscreen
+            zoom={zoom}
+            onZoom={zoomBy}
+          />
+        </div>
+      )}
       {notice && (
         <div className="toast" role="status">
           {notice}
@@ -700,6 +841,33 @@ export function App() {
           }}
           onClose={() => setProjectsOpen(false)}
         />
+      )}
+      {discardPrompt && (
+        <div className="modal-backdrop confirm-backdrop" onClick={() => void answerDiscard("cancel")}>
+          <div className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-label="Unsaved changes" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Discard unsaved changes?</h3>
+            </div>
+            <p className="confirm-text">
+              {project
+                ? `“${project.name}” has changes that haven't been saved.`
+                : "This pattern has edits and hasn't been saved as a project."}
+            </p>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={() => void answerDiscard("cancel")} autoFocus>
+                Cancel
+              </button>
+              <div className="actions">
+                <button className="btn btn-danger" onClick={() => void answerDiscard("discard")}>
+                  Discard
+                </button>
+                <button className="btn btn-primary" onClick={() => void answerDiscard("save")}>
+                  {project ? "Save first" : "Save as project…"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
       {exportOpen && pattern && (
         <ExportDialog
