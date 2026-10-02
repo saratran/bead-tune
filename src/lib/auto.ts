@@ -952,9 +952,24 @@ export interface PreferenceSeed {
   tone?: Tone;
 }
 
+/** Labels "More like this" puts in front of a pick's name, one per kind of variation. */
+export const TUNED_PREFIXES = ["Tuned", "Simpler", "More detail", "Variation"] as const;
+
+/** A pick's name without any "Tuned: " / "Simpler: " … prefixes. */
+export function pickName(label: string): string {
+  const re = new RegExp(`^(${TUNED_PREFIXES.join("|")})( \\d+)?: `);
+  let out = label;
+  while (re.test(out)) out = out.replace(re, "");
+  return out;
+}
+
 /**
- * "More like this": for each pick, try its close variations and fine-tune the
- * best, keeping the pick's level of simplicity and maximising preserved features.
+ * "More like this": for each pick, several variations close to it —
+ *  - Tuned: the pick's level of simplicity, keeping as many features as possible;
+ *  - Simpler: easier to make, giving up a little likeness;
+ *  - More detail: keeps more features, allowing a bit more effort;
+ *  - Variation: other close settings that look noticeably different.
+ * Up to `count` results in total, the picks taking turns (all "Tuned" first).
  */
 export async function tuneFromPreferences(
   source: ImageSource,
@@ -971,23 +986,28 @@ export async function tuneFromPreferences(
     return evaluators.get(tone)!;
   };
   const objective = objectiveFor("Most faithful");
-  const perSeed = neighbours(seeds[0]?.candidate ?? ({} as Candidate)).length + options.refine.budget;
+  const simpler = objectiveFor("Simplest");
+  // Shorter runs for the extra variations, so tuning stays quick.
+  const sideBudget = Math.max(10, Math.round(options.refine.budget / 2));
+  const perSeed = neighbours(seeds[0]?.candidate ?? ({} as Candidate)).length + options.refine.budget + 2 * sideBudget;
   const total = Math.max(1, seeds.length * perSeed);
   let done = 0;
   const step = () => onProgress?.({ phase: "refine", done: ++done, total });
   const pools = new Map<Tone, Evaluated[]>();
-  const results: { label: string; reason: string; from: Candidate; best: Evaluated; cost: number; tone: Tone }[] = [];
+  type Variation = { label: string; reason: string; from: Candidate; best: Evaluated; tone: Tone };
+  const perPick: Variation[][] = [];
 
   for (const [n, seed] of seeds.entries()) {
     if (signal?.aborted) break;
     const tone = seed.tone ?? "natural";
+    const name = pickName(seed.label);
     const evaluate = evaluatorFor(tone);
     if (!pools.has(tone)) pools.set(tone, []);
     const pool = pools.get(tone)!;
     const start = evaluate(seed.candidate);
     step();
     if (!start) continue;
-    pool.push(start);
+    const mine: Evaluated[] = [start];
     // Stay at (or below) the pick's level of effort; allow a hair of slack.
     const maxEffortCost = effortCost(start.metrics) * 1.05;
     const allowed = (m: Metrics) => effortCost(m) <= maxEffortCost && likenessCost(m) <= likenessCost(start.metrics) * 1.03;
@@ -997,23 +1017,57 @@ export async function tuneFromPreferences(
       const r = evaluate(c);
       step();
       if (!r) continue;
-      pool.push(r);
+      mine.push(r);
       if (allowed(r.metrics) && objective(r.metrics) < objective(best.metrics)) best = r;
       await yieldToBrowser();
     }
-    const tuned = await refine(evaluate, best, objective, { ...options.refine, seed: (options.refine.seed ?? 1) + n, maxEffortCost, likenessTolerance: 0.03 }, signal, step);
-    pool.push(...tuned.tried);
-    results.push({ label: `Tuned: ${seed.label}`, reason: "Your pick, adjusted to keep more of the original's features", from: seed.candidate, best: tuned.best, cost: objective(tuned.best.metrics), tone });
+    const seedOf = (k: number) => (options.refine.seed ?? 1) + n * 10 + k;
+    const tuned = await refine(evaluate, best, objective, { ...options.refine, seed: seedOf(0), maxEffortCost, likenessTolerance: 0.03 }, signal, step);
+    mine.push(...tuned.tried);
+    const out: Variation[] = [{ label: `Tuned: ${name}`, reason: "Your pick, adjusted to keep more of the original's features", from: seed.candidate, best: tuned.best, tone }];
+
+    if (!signal?.aborted) {
+      const easy = await refine(evaluate, start, simpler, { ...options.refine, budget: sideBudget, seed: seedOf(1), likenessTolerance: 0.08 }, signal, step);
+      mine.push(...easy.tried);
+      if (effortCost(easy.best.metrics) < effortCost(tuned.best.metrics) * 0.95) {
+        out.push({ label: `Simpler: ${name}`, reason: "Like your pick, but easier to make (fewer colours or strays)", from: seed.candidate, best: easy.best, tone });
+      }
+    }
+    if (!signal?.aborted) {
+      const rich = await refine(evaluate, tuned.best, (m) => featureCost(m) + 0.5 * likenessCost(m), { ...options.refine, budget: sideBudget, seed: seedOf(2), maxEffortCost: effortCost(start.metrics) * 1.35, likenessTolerance: 0.03 }, signal, step);
+      mine.push(...rich.tried);
+      if (featureCost(rich.best.metrics) < featureCost(tuned.best.metrics) * 0.97) {
+        out.push({ label: `More detail: ${name}`, reason: "Like your pick, keeping more fine detail (a bit more effort)", from: seed.candidate, best: rich.best, tone });
+      }
+    }
+    // Other close settings, best first, kept only if they look different from what's already offered.
+    const near = mine
+      .filter((r) => effortCost(r.metrics) <= effortCost(start.metrics) * 1.25 && likenessCost(r.metrics) <= likenessCost(start.metrics) * 1.1)
+      .sort((a, b) => objective(a.metrics) - objective(b.metrics));
+    let v = 0;
+    for (const r of near) {
+      if (v >= 4) break;
+      if ([start, ...out.map((o) => o.best)].some((o) => difference(o.pattern, r.pattern) < MIN_DIFFERENCE / 2)) continue;
+      v++;
+      out.push({ label: `Variation ${v}: ${name}`, reason: "A close alternative to your pick", from: seed.candidate, best: r, tone });
+    }
+    pool.push(...mine);
+    perPick.push(out);
   }
   onProgress?.({ phase: "refine", done: total, total });
 
   const rated = new Map([...pools].map(([tone, pool]) => [tone, new Map(rate(pool).map((r) => [JSON.stringify(r.candidate), r]))]));
   const out: RefinedSuggestion[] = [];
-  for (const r of results.sort((a, b) => a.cost - b.cost)) {
-    const s = rated.get(r.tone)!.get(JSON.stringify(r.best.candidate))!;
-    if (out.length >= options.count || out.some((o) => difference(o.pattern, s.pattern) < MIN_DIFFERENCE / 2)) continue;
-    const changed = JSON.stringify(r.best.candidate) !== JSON.stringify(r.from);
-    out.push({ ...s, label: r.label, tone: r.tone, reason: changed ? r.reason : "Already the best version of this pick", ...(changed ? { refinedFrom: r.from } : {}) });
+  // Picks take turns: every pick's "Tuned" first, then their second variation, and so on.
+  for (let k = 0; out.length < options.count && perPick.some((l) => l.length > k); k++) {
+    for (const list of perPick) {
+      const r = list[k];
+      if (!r || out.length >= options.count) continue;
+      const s = rated.get(r.tone)!.get(JSON.stringify(r.best.candidate))!;
+      if (out.some((o) => difference(o.pattern, s.pattern) < MIN_DIFFERENCE / 2)) continue;
+      const changed = JSON.stringify(r.best.candidate) !== JSON.stringify(r.from);
+      out.push({ ...s, label: r.label, tone: r.tone, reason: changed ? r.reason : "Already the best version of this pick", ...(changed ? { refinedFrom: r.from } : {}) });
+    }
   }
   return out;
 }

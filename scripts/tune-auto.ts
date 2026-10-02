@@ -10,7 +10,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import { rgbToLab } from "../src/lib/color";
-import { autoSuggest, DEFAULT_SEARCH_SPACE, effortCost, type Tone, enumerateCandidates, featureCost, likenessToleranceFor, makeEvaluator, objectiveFor, rate, refine, scan, SEARCH_OPTIONS, suggest, tuneFromPreferences, type Candidate, type SearchSpace } from "../src/lib/auto";
+import { autoSuggest, DEFAULT_SEARCH_SPACE, effortCost, type Tone, enumerateCandidates, featureCost, likenessToleranceFor, makeEvaluator, objectiveFor, rate, refine, scan, SEARCH_OPTIONS, suggest, tuneFromPreferences, pickName, type Candidate, type SearchSpace } from "../src/lib/auto";
 import { BRANDS, DEFAULT_BRAND_ID } from "../src/lib/palettes";
 import { DEFAULT_PATTERN_OPTIONS, type Pattern } from "../src/lib/pattern";
 import type { PipelineSettings } from "../src/lib/pipeline";
@@ -150,7 +150,7 @@ if (args.includes("--prefer")) {
   const tuned = await tuneFromPreferences(source, base, picks, { count: picks.length, refine: { method: "pattern", budget: Number(flag("budget", "40")) } });
   console.log("\ntuned from picks:");
   for (const t of tuned) {
-    const from = picks.find((p) => `Tuned: ${p.label}` === t.label)!;
+    const from = picks.find((p) => pickName(t.label) === p.label)!;
     const fm = from.metrics, m = t.metrics;
     console.log(`${t.label.padEnd(22)} featureCost ${featureCost(fm).toFixed(3)} → ${featureCost(m).toFixed(3)}  effort ${effortCost(fm).toFixed(3)} → ${effortCost(m).toFixed(3)}  colours ${fm.colors} → ${m.colors}`);
     console.log(`                       ${JSON.stringify(from.candidate)}\n                     → ${JSON.stringify(t.candidate)}`);

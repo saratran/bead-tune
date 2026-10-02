@@ -302,7 +302,7 @@ describe("tuning from your picks", () => {
     fireEvent.click(within(bar).getByText(/Tune selected/));
     await waitFor(() => expect(onResults).toHaveBeenCalled(), { timeout: 15000 });
     expect(screen.getByText("Based on your picks")).toBeTruthy();
-    for (const s of onResults.mock.lastCall![0]) expect(s.label).toStartWith("Tuned: ");
+    for (const s of onResults.mock.lastCall![0]) expect(s.label).toMatch(/^(Tuned|Simpler|More detail|Variation \d+): /);
     expect(screen.queryByRole("status") === null).toBe(true); // selection cleared
   }, 30000);
 

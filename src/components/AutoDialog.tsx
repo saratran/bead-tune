@@ -4,6 +4,7 @@ import {
   candidateSettings,
   countCombinations,
   tuneFromPreferences,
+  pickName,
   SEARCH_OPTIONS,
   type Candidate,
   type DitherChoice,
@@ -381,8 +382,9 @@ export function AutoDialog({
     const found = await tuneFromPreferences(
       source,
       base,
-      seeds.map((s) => ({ label: s.label.replace(/^Tuned: /, ""), candidate: s.candidate, tone: s.tone })),
-      { count: seeds.length, refine: { method: config.refine.method, budget: Math.max(40, config.refine.budget) } },
+      seeds.map((s) => ({ label: pickName(s.label), candidate: s.candidate, tone: s.tone })),
+      // A few variations of each pick (at least 4 results, or 2 per pick).
+      { count: Math.max(config.count, 4, seeds.length * 2), refine: { method: config.refine.method, budget: Math.max(40, config.refine.budget) } },
       setProgress,
       ctrl.signal,
     );
@@ -805,7 +807,7 @@ export function AutoDialog({
           {results && !progress && (
             <div className="auto-results">
               <div className="list-head">
-                <h4>{results.length && results.every((r) => r.label.startsWith("Tuned:")) ? "Based on your picks" : "Suggestions"}</h4>
+                <h4>{results.length && results.every((r) => pickName(r.label) !== r.label) ? "Based on your picks" : "Suggestions"}</h4>
                 {results.length > 1 && (
                   <select className="input sort-select" aria-label="Sort suggestions" value={resultSort} onChange={(e) => setResultSort(e.target.value as ResultSort)}>
                     {RESULT_SORTS.map(([v, label]) => (

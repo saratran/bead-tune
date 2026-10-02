@@ -16,6 +16,7 @@ import {
   spaceForTone,
   TONE_CHROMA,
   tuneFromPreferences,
+  pickName,
   countCombinations,
   DEFAULT_SEARCH_SPACE,
   difference,
@@ -344,6 +345,21 @@ describe("tuning from picks", () => {
     expect(out.length).toBeGreaterThanOrEqual(1);
     expect(out.length).toBeLessThanOrEqual(2);
     expect(out.every((s) => s.label.startsWith("Tuned: "))).toBe(true);
+  });
+
+  test("one pick gives the tuned version plus distinct variations", async () => {
+    const out = await tuneFromPreferences(source, base, [{ label: "Balanced", candidate: pick }], { count: 5, refine: { method: "pattern", budget: 20 } });
+    expect(out.length).toBeGreaterThan(1);
+    expect(out[0]!.label).toBe("Tuned: Balanced");
+    for (const s of out) expect(s.label).toMatch(/^(Tuned|Simpler|More detail|Variation \d+): Balanced$/);
+    for (let i = 0; i < out.length; i++) for (let j = i + 1; j < out.length; j++) expect(difference(out[i]!.pattern, out[j]!.pattern)).toBeGreaterThan(0);
+  }, 30000);
+
+  test("pickName strips the variation prefixes", () => {
+    expect(pickName("Tuned: Balanced")).toBe("Balanced");
+    expect(pickName("Variation 2: Simpler: My settings 1")).toBe("My settings 1");
+    expect(pickName("More detail: Crisp")).toBe("Crisp");
+    expect(pickName("Most faithful")).toBe("Most faithful");
   });
 });
 
