@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+*.tgz
+
+# TypeScript
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+*.lcov
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Environment variables (keep an .env.example if you add one)
+.env
+.env.*
+!.env.example
+
+# Caches
+.cache/
+.eslintcache
+
+# Editors / IDEs
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*~
+
+# Claude Code local (per-user) settings
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
