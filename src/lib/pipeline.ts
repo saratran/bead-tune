@@ -28,6 +28,13 @@ export interface PipelineResult {
   pixelGrid?: PixelGrid;
   /** Pixel art mode found no usable grid and fell back to sharp sampling. */
   pixelArtFallback?: boolean;
+  /**
+   * Where the final pattern came from (not set for pixel art): the area of the
+   * source and grid width that were sampled, and the offset of that grid inside
+   * the final pattern (after trim and outline). Pattern cell (x, y) corresponds
+   * to grid cell (x - offsetX, y - offsetY).
+   */
+  sampled?: { crop: Crop; width: number; offsetX: number; offsetY: number };
 }
 
 /** Above this, a "detected" pixel grid is almost certainly a photo, not pixel art. */
@@ -57,6 +64,7 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
     const mode = s.sampling === "smooth" ? "smooth" : "sharp";
     const sample = (crop: Crop) => sampleGrid(source, inner, crop, mode, s.denoise);
     const first = sample(userCrop);
+    let sampled = { crop: userCrop, width: inner, offsetX: 0, offsetY: 0 };
     if (options.removeBackground && !options.bgColor) {
       // Pin the background colour now: after cropping, the subject may touch the border.
       options = { ...options, bgColor: detectBackground(first, options.adjustments) };
@@ -79,6 +87,7 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
       let sampleWidth = clampWidth((inner * (x1 - x0)) / box.w);
       for (let attempt = 0; attempt < 2; attempt++) {
         pattern = generatePattern(sampleGrid(source, sampleWidth, crop, mode, s.denoise), options);
+        sampled = { crop, width: sampleWidth, offsetX: 0, offsetY: 0 };
         const subject = contentBox(pattern);
         if (!subject || subject.w === inner) break;
         const next = clampWidth((sampleWidth * inner) / subject.w);
@@ -86,11 +95,19 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
         sampleWidth = next;
       }
     }
-    if (s.trim) pattern = trimPattern(pattern);
+    if (s.trim) {
+      const trimBox = contentBox(pattern);
+      if (trimBox) sampled = { ...sampled, offsetX: -trimBox.x, offsetY: -trimBox.y };
+      pattern = trimPattern(pattern);
+    }
+    result.sampled = sampled;
   }
 
   if (s.cleanup > 0) pattern = removeStrays(pattern, s.cleanup);
-  if (s.outline) pattern = addOutline(padPattern(pattern, 1), s.outline);
+  if (s.outline) {
+    pattern = addOutline(padPattern(pattern, 1), s.outline);
+    if (result.sampled) result.sampled = { ...result.sampled, offsetX: result.sampled.offsetX + 1, offsetY: result.sampled.offsetY + 1 };
+  }
   result.pattern = pattern;
   return result;
 }
