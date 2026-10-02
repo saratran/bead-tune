@@ -19,6 +19,8 @@ export interface Bookmark {
   beads: number;
   strays: number;
   createdAt: number;
+  /** Scored on a fixed scale (your own settings), not relative to an Auto search. */
+  fixedScale?: boolean;
   /** The colour tone it was chosen for (natural if missing). */
   tone?: Tone;
   /** What the pattern was made with; applying it later uses your current width and bead set. */

@@ -1874,3 +1874,49 @@ input[type="range"] {
   padding: 5px 10px;
   font-size: 13px;
 }
+
+/* Auto tabs and Results */
+.auto-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.auto-tabs button {
+  border: none;
+  background: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.auto-tabs button.on {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.results-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.results-actions progress {
+  flex: 1 1 160px;
+  accent-color: var(--accent);
+}
+
+.results-empty {
+  min-height: 160px;
+}
+
+.results-row {
+  gap: 8px;
+  margin-top: -6px;
+}
+
+.results-row .btn {
+  flex: 1 1 auto;
+}

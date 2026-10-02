@@ -32,6 +32,7 @@ const source = imageDataSource(img);
 const base: PipelineSettings = { width: 12, sampling: "smooth", denoise: false, trim: false, cleanup: 0, outline: null, crop: FULL_CROP, options: { ...DEFAULT_PATTERN_OPTIONS, palette: mard } };
 
 const count = () => screen.getByTestId("auto-count").textContent!;
+const openTab = (name: RegExp) => fireEvent.click(screen.getByRole("tab", { name }));
 const chip = (group: string, name: string) => within(screen.getByRole("group", { name: group })).getByRole("button", { name });
 
 function renderDialog(props: Partial<Parameters<typeof AutoDialog>[0]> = {}) {
@@ -103,19 +104,22 @@ describe("AutoDialog", () => {
     expect(list[0].label).toBe("Most faithful");
 
     rerender(<AutoDialog source={source} base={base} results={list} onResults={onResults} onApply={onApply} bookmarks={[]} onBookmarksChange={mock()} onClose={onClose} />);
-    expect(screen.getByText("Search again")).toBeTruthy();
+    // A finished search lands on the Results tab.
+    expect(screen.getByRole("tab", { name: /Results/ }).getAttribute("aria-selected")).toBe("true");
     const cards = screen.getAllByRole("listitem");
     expect(within(cards[0]!).getByText("Most faithful")).toBeTruthy();
     expect(within(cards[0]!).getByText(/beads · \d+ stray/)).toBeTruthy();
     fireEvent.click(within(cards[0]!).getByText("Use this"));
     expect(onApply).toHaveBeenCalledWith(list[0]);
+    openTab(/Search/);
+    expect(screen.getByText("Search again")).toBeTruthy();
   });
 
   test("Stop ends the scan early", async () => {
     const { onResults } = renderDialog();
     fireEvent.click(screen.getByText("Find suggestions"));
     fireEvent.click(await screen.findByText("Stop"));
-    await waitFor(() => expect(screen.getByText(/Find suggestions|Search again/)).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText("Stop") === null).toBe(true));
     // Either nothing was scored yet or fewer than all 128 were.
     if (onResults.mock.calls.length) expect(onResults.mock.lastCall![0].length).toBeGreaterThan(0);
   });
@@ -154,8 +158,8 @@ describe("Auto in the app", () => {
     expect(screen.queryByRole("dialog", { name: "Auto suggestions" }) === null).toBe(true);
     expect(document.querySelector(".toast")!.textContent).toBe("Applied “Most faithful”");
 
-    // Reopening shows the same suggestions without rescanning.
-    fireEvent.click(screen.getByText("✨ Auto suggestions"));
+    // Reopening the results shows the same suggestions without rescanning.
+    fireEvent.click(screen.getByRole("button", { name: /^★ Results/ }));
     expect(screen.getAllByText("Use this").length).toBeGreaterThan(0);
   }, 20000);
 });
@@ -210,7 +214,7 @@ describe("fine-tuning and bookmarks", () => {
   }, 20000);
 
   test("bookmarks show without running a scan", () => {
-    renderDialog({ bookmarks: [{ id: "b1", label: "Balanced", candidate: { sampling: "smooth", denoise: false, maxColors: 24, dither: { mode: "none", strength: 0 }, cleanup: 0, metric: "standard", minBeads: 0, brightness: 0, contrast: 0, saturation: 0 }, thumbnail: "data:image/png;base64,AA==", likeness: 80, ease: 60, colors: 24, beads: 144, strays: 2, createdAt: 1, context: { width: 52, brandId: "mard" } }] });
+    renderDialog({ initialTab: "results", bookmarks: [{ id: "b1", label: "Balanced", candidate: { sampling: "smooth", denoise: false, maxColors: 24, dither: { mode: "none", strength: 0 }, cleanup: 0, metric: "standard", minBeads: 0, brightness: 0, contrast: 0, saturation: 0 }, thumbnail: "data:image/png;base64,AA==", likeness: 80, ease: 60, colors: 24, beads: 144, strays: 2, createdAt: 1, context: { width: 52, brandId: "mard" } }] });
     const section = screen.getByRole("region", { name: "Bookmarks" });
     expect(within(section).getByText("Balanced")).toBeTruthy();
     expect(within(section).getByText("Made at 52 beads wide")).toBeTruthy(); // current width is 12
@@ -243,13 +247,15 @@ describe("bookmarks in the app", () => {
     expect(screen.getByRole("region", { name: "Bookmarks" })).toBeTruthy();
 
     // A new scan replaces the suggestions but keeps the bookmark.
+    openTab(/Search/);
     fireEvent.click(screen.getByText("Search again"));
-    await waitFor(() => expect(screen.getByText("Search again")).toBeTruthy(), { timeout: 10000 });
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Results/ }).getAttribute("aria-selected")).toBe("true"), { timeout: 10000 });
     expect(within(screen.getByRole("region", { name: "Bookmarks" })).getByText(label)).toBeTruthy();
 
     // Reload: same image → same bookmarks.
     unmount();
     await loadAndScan();
+    openTab(/Results/);
     expect(within(screen.getByRole("region", { name: "Bookmarks" })).getByText(label)).toBeTruthy();
 
     // Save as a project, forget the browser's bookmarks, reopen the project.
@@ -262,7 +268,7 @@ describe("bookmarks in the app", () => {
     localStorage.removeItem("bead-pattern:bookmarks");
     fireEvent.click(await within(d).findByRole("button", { name: "Open" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Projects" }) === null).toBe(true));
-    fireEvent.click(screen.getByText("✨ Auto suggestions"));
+    fireEvent.click(screen.getByRole("button", { name: /^★ Results/ }));
     await waitFor(() => expect(within(screen.getByRole("region", { name: "Bookmarks" })).getByText(label)).toBeTruthy());
   }, 40000);
 });
@@ -557,7 +563,7 @@ describe("viewing a result large", () => {
       createdAt: 1,
       context: { width: 12, brandId: "mard" },
     };
-    renderDialog({ bookmarks: [bm] });
+    renderDialog({ initialTab: "results", bookmarks: [bm] });
     fireEvent.click(screen.getByLabelText("View Saved one larger"));
     const v = screen.getByRole("dialog", { name: "View Saved one" });
     expect(within(v).getByText(/^12 × 12 · \d+ colours · 144 beads$/)).toBeTruthy();
@@ -622,4 +628,63 @@ describe("sorting", () => {
     renderDialog({ results: list });
     expect((screen.getByLabelText("Sort suggestions") as HTMLSelectElement).value).toBe("colors-asc");
   }, 30000);
+});
+
+describe("Results tab and bookmarking your own settings", () => {
+  const halves = (w: number, h: number) => {
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d.set(x < w / 2 ? [210, 40, 50, 255] : [40, 90, 200, 255], (y * w + x) * 4);
+    return d;
+  };
+  const toast = () => document.querySelector(".toast")?.textContent;
+
+  test("the tabs switch, and an empty Results tab points back to Search", () => {
+    renderDialog();
+    expect(screen.getByText("Find suggestions")).toBeTruthy();
+    openTab(/Results/);
+    expect(screen.queryByText("Find suggestions") === null).toBe(true);
+    expect(screen.getByText(/No results yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.getByText("Find suggestions")).toBeTruthy();
+  });
+
+  test("the panel's bookmark button reports errors inline", () => {
+    const onBookmarkCurrent = mock(() => "These settings are already bookmarked.");
+    renderDialog({ initialTab: "results", onBookmarkCurrent });
+    fireEvent.click(screen.getByText("★ Bookmark current settings"));
+    expect(onBookmarkCurrent).toHaveBeenCalled();
+    expect(screen.getByText("These settings are already bookmarked.")).toBeTruthy();
+  });
+
+  test("bookmark current settings from the sidebar, then tune it on the Results tab", async () => {
+    mockPixels(halves);
+    const { container } = render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(container.querySelector(".pattern-canvas")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("★ Bookmark current settings"));
+    expect(toast()).toBe("Bookmarked “My settings 1”");
+    fireEvent.click(screen.getByText("★ Bookmark current settings"));
+    expect(toast()).toBe("These settings are already bookmarked.");
+
+    fireEvent.click(screen.getByRole("button", { name: "★ Results (1)" }));
+    expect(screen.getByRole("tab", { name: /Results/ }).getAttribute("aria-selected")).toBe("true");
+    const section = screen.getByRole("region", { name: "Bookmarks" });
+    expect(within(section).getByText("My settings 1")).toBeTruthy();
+    expect(within(section).getByText("Your settings · scores on a fixed scale")).toBeTruthy();
+
+    fireEvent.click(within(section).getByText("More like this"));
+    await waitFor(() => expect(screen.getByText("Based on your picks")).toBeTruthy(), { timeout: 15000 });
+    expect(screen.getAllByText(/^Tuned: My settings 1/).length).toBeGreaterThan(0);
+  }, 30000);
+
+  test("pixel art settings can't be bookmarked", async () => {
+    mockPixels(halves);
+    const { container } = render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(container.querySelector(".pattern-canvas")).toBeTruthy());
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Sampling" })).getByRole("radio", { name: "Pixel art" }));
+    fireEvent.click(screen.getByText("★ Bookmark current settings"));
+    expect(toast()).toContain("Pixel art settings can't be bookmarked");
+  });
 });

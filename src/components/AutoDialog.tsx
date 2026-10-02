@@ -54,7 +54,13 @@ interface Props {
   crop?: Crop;
   boardSize?: number;
   theme?: string;
+  /** Which tab to open on. */
+  initialTab?: AutoTab;
+  /** Saves the current image settings as a bookmark; returns an error message, or null. */
+  onBookmarkCurrent?: () => string | null;
 }
+
+export type AutoTab = "search" | "results";
 
 const LIMITS = [100, 200, 300, 600, 1000, 2000];
 const BUDGETS = [20, 40, 80, 150];
@@ -266,7 +272,24 @@ function Thumbnail({ s }: { s: { pattern: RefinedSuggestion["pattern"] } }) {
   return <canvas ref={ref} className="auto-thumb" />;
 }
 
-export function AutoDialog({ source, base, results, onResults, onApply, bookmarks, onBookmarksChange, onClose, image, crop, boardSize = 26, theme = "dark" }: Props) {
+export function AutoDialog({
+  source,
+  base,
+  results,
+  onResults,
+  onApply,
+  bookmarks,
+  onBookmarksChange,
+  onClose,
+  image,
+  crop,
+  boardSize = 26,
+  theme = "dark",
+  initialTab = "search",
+  onBookmarkCurrent,
+}: Props) {
+  const [tab, setTab] = useState<AutoTab>(initialTab);
+  const [bookmarkError, setBookmarkError] = useState<string | null>(null);
   const [config, setConfigState] = useState<AutoConfig>(loadLastConfig);
   const [presets, setPresets] = useState<AutoPreset[]>(allPresets);
   const [presetId, setPresetIdState] = useState(() => {
@@ -340,6 +363,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
     if (found.length) {
       onResults(found);
       setShowSpace(false);
+      setTab("results");
     }
   };
 
@@ -458,13 +482,22 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
     <div className="modal-backdrop" onClick={() => !progress && onClose()}>
       <div className="modal auto-modal" role="dialog" aria-modal="true" aria-label="Auto suggestions" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>✨ Auto suggestions</h3>
+          <div className="auto-tabs" role="tablist" aria-label="Auto">
+            <button role="tab" aria-selected={tab === "search"} className={tab === "search" ? "on" : ""} onClick={() => setTab("search")} disabled={!!progress}>
+              ✨ Search
+            </button>
+            <button role="tab" aria-selected={tab === "results"} className={tab === "results" ? "on" : ""} onClick={() => setTab("results")} disabled={!!progress}>
+              ★ Results{(results?.length ?? 0) + bookmarks.length > 0 ? ` (${(results?.length ?? 0) + bookmarks.length})` : ""}
+            </button>
+          </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={!!progress}>
             ×
           </button>
         </div>
 
         <div className="auto-body">
+          {tab === "search" && (
+          <>
           <div className="auto-presets">
             <label htmlFor="auto-preset">Preset</label>
             <select id="auto-preset" className="input" value={presetId} onChange={(e) => choosePreset(e.target.value)}>
@@ -665,6 +698,40 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
               </button>
             )}
           </div>
+          </>
+          )}
+
+          {tab === "results" && (
+          <>
+          <div className="results-actions">
+            {onBookmarkCurrent && (
+              <button
+                className="btn btn-ghost"
+                disabled={!!progress}
+                onClick={() => setBookmarkError(onBookmarkCurrent())}
+                title="Save your current image settings as a bookmark, to compare or fine-tune"
+              >
+                ★ Bookmark current settings
+              </button>
+            )}
+            {progress && (
+              <>
+                <span className="small">Fine-tuning…</span>
+                <progress max={progress.total} value={progress.done} aria-label="Tuning progress" />
+                <button className="btn btn-ghost" onClick={() => abort.current?.abort()}>
+                  Stop
+                </button>
+              </>
+            )}
+            {bookmarkError && <span className="error small">{bookmarkError}</span>}
+          </div>
+          {!results?.length && !bookmarks.length && !progress && (
+            <div className="empty results-empty">
+              <span>
+                No results yet. Run a search on the <button className="link-btn" onClick={() => setTab("search")}>Search</button> tab, or bookmark your current settings.
+              </span>
+            </div>
+          )}
 
           {preferred.length > 0 && !progress && (
             <div className="prefer-bar" role="status">
@@ -714,6 +781,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
                         {b.colors} colours · {b.beads.toLocaleString()} beads · {b.strays} stray
                       </span>
                       <span className="muted small auto-settings">{describeCandidate(b.candidate)}</span>
+                      {b.fixedScale && <span className="muted small">Your settings · scores on a fixed scale</span>}
                       {b.context.width !== base.width && <span className="muted small">Made at {b.context.width} beads wide</span>}
                       <div className="row">
                         <button className="btn btn-primary" onClick={() => onApply(b)}>
@@ -809,6 +877,8 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
                 ));
               })()}
             </div>
+          )}
+          </>
           )}
         </div>
         {viewing &&

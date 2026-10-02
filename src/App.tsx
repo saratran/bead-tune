@@ -6,9 +6,9 @@ import { DEFAULT_IMAGE_SETTINGS, ImageOptions, type ImageSettings } from "./comp
 import { PatternView, type EditTool } from "./components/PatternView";
 import { ProjectsDialog, type OpenProject } from "./components/ProjectsDialog";
 import { CropDialog } from "./components/CropDialog";
-import { AutoDialog } from "./components/AutoDialog";
-import type { Candidate, RefinedSuggestion } from "./lib/auto";
-import { imageFingerprint, loadBookmarks, mergeBookmarks, saveBookmarks, type Bookmark } from "./lib/bookmarks";
+import { AutoDialog, type AutoTab } from "./components/AutoDialog";
+import { effortCost, featureCost, likenessCost, makeEvaluator, type Candidate, type RefinedSuggestion } from "./lib/auto";
+import { imageFingerprint, loadBookmarks, mergeBookmarks, sameCandidate, saveBookmarks, type Bookmark } from "./lib/bookmarks";
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
 import { addOutline, applyEdits, type Edits } from "./lib/cleanup";
@@ -88,7 +88,7 @@ function loadImage(file: Blob): Promise<HTMLImageElement> {
   });
 }
 
-type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | { kind: "crop" } | { kind: "auto" } | null;
+type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | { kind: "crop" } | { kind: "auto"; tab?: AutoTab } | null;
 
 const MAX_UNDO = 50;
 
@@ -655,6 +655,58 @@ export function App() {
     />
   );
 
+  /** The current image settings as an Auto candidate (null in pixel art mode). */
+  const currentCandidate = (): Candidate | null => {
+    const s = imageSettings;
+    if (s.sampling === "pixelart") return null;
+    return {
+      sampling: s.sampling,
+      denoise: s.denoise,
+      maxColors: s.maxColors,
+      dither: { mode: s.dither, strength: s.dither === "none" ? 0 : s.ditherStrength },
+      cleanup: s.cleanup,
+      metric: s.metric,
+      minBeads: s.minBeads,
+      brightness: s.adjustments.brightness,
+      contrast: s.adjustments.contrast,
+      saturation: s.adjustments.saturation,
+    };
+  };
+
+  /** Saves the current settings as a bookmark (scored on a fixed scale). Returns an error, or null. */
+  const bookmarkCurrent = (): string | null => {
+    if (!source || !fingerprint) return "Add an image first.";
+    const c = currentCandidate();
+    if (!c) return "Pixel art settings can't be bookmarked — Auto doesn't search pixel art.";
+    if (bookmarks.some((b) => sameCandidate(b.candidate, c))) return "These settings are already bookmarked.";
+    const r = makeEvaluator(source, pipelineSettings(imageSettings, width))(c);
+    if (!r) return "Nothing to bookmark: the pattern is empty.";
+    const pct = (cost: number) => Math.round(100 * Math.min(1, Math.max(0, 1 - cost)));
+    const n = bookmarks.filter((b) => /^My settings \d+$/.test(b.label)).length + 1;
+    const label = `My settings ${n}`;
+    setBookmarks([
+      ...bookmarks,
+      {
+        id: `bm-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        label,
+        candidate: c,
+        thumbnail: patternThumbnail(r.pattern),
+        features: pct(featureCost(r.metrics)),
+        likeness: pct(likenessCost(r.metrics)),
+        ease: pct(effortCost(r.metrics)),
+        colors: r.metrics.colors,
+        beads: r.metrics.beads,
+        strays: r.metrics.strays,
+        createdAt: Date.now(),
+        tone: "natural",
+        fixedScale: true,
+        context: { width, brandId },
+      },
+    ]);
+    setNotice({ text: `Bookmarked “${label}”` });
+    return null;
+  };
+
   const edited = excluded.size > 0 || swaps.size > 0;
   const ownedEmpty = ownedOnly && ownedSet.size === 0;
 
@@ -816,9 +868,25 @@ export function App() {
             {ownedEmpty && <p className="hint warn">Choose the colours you own to use this option.</p>}
           </div>
 
-          <button className="btn btn-auto full" disabled={!pattern} onClick={() => setModal({ kind: "auto" })}>
+          <button className="btn btn-auto full" disabled={!pattern} onClick={() => setModal({ kind: "auto", tab: "search" })}>
             ✨ Auto suggestions
           </button>
+          <div className="row results-row">
+            <button className="btn btn-ghost" disabled={!pattern} onClick={() => setModal({ kind: "auto", tab: "results" })}>
+              ★ Results{(autoResults?.key === autoKey ? autoResults.list.length : 0) + bookmarks.length > 0 ? ` (${(autoResults?.key === autoKey ? autoResults.list.length : 0) + bookmarks.length})` : ""}
+            </button>
+            <button
+              className="btn btn-ghost"
+              disabled={!pattern}
+              title="Save your current image settings as a bookmark, to compare or fine-tune later"
+              onClick={() => {
+                const err = bookmarkCurrent();
+                if (err) setNotice({ text: err, error: true });
+              }}
+            >
+              ★ Bookmark current settings
+            </button>
+          </div>
 
           <ImageOptions
             settings={imageSettings}
@@ -1109,6 +1177,8 @@ export function App() {
           crop={crop}
           boardSize={boardSize}
           theme={theme}
+          initialTab={modal.tab}
+          onBookmarkCurrent={bookmarkCurrent}
         />
       )}
       {modal?.kind === "crop" && image && (
