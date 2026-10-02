@@ -7,7 +7,8 @@ Turn any image into a fuse bead pattern (MARD, Perler — any bead size). Everyt
 ```bash
 bun install
 bun dev          # http://localhost:3000 (hot reload)
-bun test         # unit tests for the pattern pipeline
+bun test         # all tests (logic, canvas drawing, export, UI components)
+bun test --coverage
 bun run typecheck
 bun run build    # static site in dist/
 ```
@@ -24,6 +25,13 @@ bun run build    # static site in dist/
 - Export dialog with live preview: PNG or PDF, size L/M/S, cell shape, grid, analysis
   diagram (coordinates + guide lines every 5/10), count summary, title, watermark, shadow,
   colour codes, and (PDF) one page per pegboard
+
+## Tests
+
+- `src/lib/*.test.ts` — colour maths, palettes, pattern pipeline, drawing, export layout and PNG/PDF files
+- `src/components/*.test.tsx` — React components and App defaults, rendered with Testing Library
+- Tests run in happy-dom (preloaded via `bunfig.toml`). It has no canvas, so `src/test/canvas-mock.ts`
+  records drawing calls and tests assert on what was drawn.
 
 ## How it works
 

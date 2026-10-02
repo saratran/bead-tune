@@ -215,33 +215,19 @@ function reducePalette(palette: BeadColor[], counts: number[], max: number): num
   return kept;
 }
 
-export function generatePattern(image: ImageData, opts: PatternOptions): Pattern {
-  const { width: w, height: h, data } = image;
-  const n = w * h;
-  const palette = opts.palette;
-  const rgb = adjustPixels(data, opts.adjustments);
-  const mask = backgroundMask(rgb, data, w, h, opts.removeBackground);
-
-  if (palette.length === 0) {
-    return { width: w, height: h, cells: new Int16Array(n).fill(EMPTY), colors: [], counts: [], total: 0 };
-  }
-
-  // Pass 1: plain nearest match against the full palette to measure usage.
-  const all = palette.map((_, i) => i);
-  const matchAll = makeMatcher(palette, all);
-  const usage = new Array<number>(palette.length).fill(0);
-  for (let i = 0; i < n; i++) {
-    if (mask[i]) continue;
-    const idx = matchAll(rgb[i * 3]!, rgb[i * 3 + 1]!, rgb[i * 3 + 2]!);
-    usage[idx] = usage[idx]! + 1;
-  }
-  const chosen = reducePalette(palette, usage, Math.max(1, opts.maxColors));
-  if (chosen.length === 0) chosen.push(0);
-
-  // Pass 2: map onto the reduced palette, optionally with Floyd–Steinberg diffusion.
-  const match = makeMatcher(palette, chosen);
-  const raw = new Int16Array(n).fill(EMPTY);
-  const buf = opts.dither ? Float32Array.from(rgb) : rgb;
+/** Maps each non-masked pixel to a palette index in `allowed`, optionally with Floyd–Steinberg diffusion. */
+function mapPixels(
+  rgb: Float32Array,
+  mask: Uint8Array,
+  w: number,
+  h: number,
+  palette: BeadColor[],
+  allowed: number[],
+  dither: boolean,
+): Int16Array {
+  const match = makeMatcher(palette, allowed);
+  const raw = new Int16Array(w * h).fill(EMPTY);
+  const buf = dither ? Float32Array.from(rgb) : rgb;
   const spread = (j: number, er: number, eg: number, eb: number, f: number) => {
     if (mask[j]) return;
     buf[j * 3] = buf[j * 3]! + er * f;
@@ -255,7 +241,7 @@ export function generatePattern(image: ImageData, opts: PatternOptions): Pattern
       const r = clamp(buf[i * 3]!), g = clamp(buf[i * 3 + 1]!), b = clamp(buf[i * 3 + 2]!);
       const idx = match(r, g, b);
       raw[i] = idx;
-      if (!opts.dither) continue;
+      if (!dither) continue;
       const [pr, pg, pb] = palette[idx]!.rgb;
       const er = (r - pr) * DITHER_STRENGTH;
       const eg = (g - pg) * DITHER_STRENGTH;
@@ -268,8 +254,32 @@ export function generatePattern(image: ImageData, opts: PatternOptions): Pattern
       }
     }
   }
+  return raw;
+}
 
-  return compact(w, h, raw, palette);
+export function generatePattern(image: ImageData, opts: PatternOptions): Pattern {
+  const { width: w, height: h, data } = image;
+  const n = w * h;
+  const palette = opts.palette;
+  const rgb = adjustPixels(data, opts.adjustments);
+  const mask = backgroundMask(rgb, data, w, h, opts.removeBackground);
+
+  if (palette.length === 0) {
+    return { width: w, height: h, cells: new Int16Array(n).fill(EMPTY), colors: [], counts: [], total: 0 };
+  }
+
+  // Pass 1: match against the full palette to measure usage. With dithering on,
+  // measure the dithered result too, so the colours dithering mixes survive reduction.
+  const all = palette.map((_, i) => i);
+  const usage = new Array<number>(palette.length).fill(0);
+  for (const idx of mapPixels(rgb, mask, w, h, palette, all, opts.dither)) {
+    if (idx !== EMPTY) usage[idx] = usage[idx]! + 1;
+  }
+  const chosen = reducePalette(palette, usage, Math.max(1, opts.maxColors));
+  if (chosen.length === 0) chosen.push(0);
+
+  // Pass 2: map onto the reduced palette.
+  return compact(w, h, mapPixels(rgb, mask, w, h, palette, chosen, opts.dither), palette);
 }
 
 /** Re-index cells from palette indices to a sorted list of only the used colours. */
