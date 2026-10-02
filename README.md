@@ -49,6 +49,8 @@ git pull && docker compose up -d --build   # update
   Ease; fine-tuning aims mainly at keeping features. "Prefer" / "More like this" tunes around
   your picks at the same simplicity. Colour tone (Natural / Vivid / Muted, multi-select)
   targets a richer or softer look. Presets: create, rename, save changes, duplicate, delete
+  Click any result or bookmark thumbnail to view it full-screen: zoom, pan, browse with ←/→,
+  compare with the original side by side, show colour codes, bookmark or use it
 - Fullscreen viewer/editor: fit-to-screen, zoom (buttons, +/−/0, Ctrl/⌘+wheel, pinch), drag to
   pan, all display and edit tools, Esc to exit, Ctrl/⌘+Z to undo
 - Works on phones: fits narrow screens, touch-sized controls, drag-to-paint on touch

@@ -475,3 +475,92 @@ describe("colour tone in the panel", () => {
     expect(within(screen.getByRole("region", { name: "Bookmarks" })).getByText("Vivid")).toBeTruthy();
   }, 30000);
 });
+
+describe("viewing a result large", () => {
+  async function withResults(extra: Partial<Parameters<typeof AutoDialog>[0]> = {}) {
+    const r = renderDialog();
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "builtin:quick" } });
+    fireEvent.click(screen.getByText("Find suggestions"));
+    await waitFor(() => expect(r.onResults).toHaveBeenCalled(), { timeout: 10000 });
+    const list = r.onResults.mock.lastCall![0];
+    let bookmarks: import("../lib/bookmarks").Bookmark[] = [];
+    const props = () => ({ source, base, results: list, onResults: r.onResults, onApply: r.onApply, bookmarks, onClose: r.onClose, ...extra });
+    const onBookmarksChange = mock((b) => {
+      bookmarks = b;
+      r.rerender(<AutoDialog {...props()} onBookmarksChange={onBookmarksChange} />);
+    });
+    r.rerender(<AutoDialog {...props()} onBookmarksChange={onBookmarksChange} />);
+    return { ...r, list, bookmarks: () => bookmarks };
+  }
+  const viewer = () => screen.getByRole("dialog", { name: /^View / });
+
+  test("click a thumbnail to view it; zoom; browse; Esc closes just the viewer", async () => {
+    const { list, onClose } = await withResults();
+    fireEvent.click(screen.getByLabelText(`View ${list[0].label} larger`));
+    expect(viewer().getAttribute("aria-label")).toBe(`View ${list[0].label}`);
+    expect(within(viewer()).getByText(`${list[0].pattern.width} × ${list[0].pattern.height} · ${list[0].pattern.colors.length} colours · ${list[0].pattern.total.toLocaleString()} beads`)).toBeTruthy();
+    expect(viewer().querySelector("canvas")).toBeTruthy();
+
+    const level = () => viewer().querySelector('[aria-label="Zoom"] .zoom-level')!.textContent;
+    fireEvent.click(within(viewer()).getByLabelText("Zoom in"));
+    expect(level()).toBe("125%");
+    fireEvent.keyDown(document.body, { key: "+" });
+    expect(level()).toBe("156%");
+    fireEvent.keyDown(document.body, { key: "0" });
+    expect(level()).toBe("100%");
+
+    if (list.length > 1) {
+      fireEvent.click(within(viewer()).getByLabelText("Next result"));
+      expect(viewer().getAttribute("aria-label")).toBe(`View ${list[1].label}`);
+      fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+      expect(viewer().getAttribute("aria-label")).toBe(`View ${list[0].label}`);
+    }
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: /^View / }) === null).toBe(true);
+    expect(onClose).not.toHaveBeenCalled(); // the Auto panel stays open
+    expect(screen.getByRole("dialog", { name: "Auto suggestions" })).toBeTruthy();
+  }, 30000);
+
+  test("use or bookmark from the viewer", async () => {
+    const { list, onApply, bookmarks } = await withResults();
+    fireEvent.click(screen.getByLabelText(`View ${list[0].label} larger`));
+    fireEvent.click(within(viewer()).getByLabelText(`Bookmark ${list[0].label}`));
+    expect(bookmarks()).toHaveLength(1);
+    expect(within(viewer()).getByLabelText(`Remove bookmark: ${list[0].label}`).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(within(viewer()).getByText("Use this"));
+    expect(onApply).toHaveBeenLastCalledWith(list[0]);
+    expect(screen.queryByRole("dialog", { name: /^View / }) === null).toBe(true);
+  }, 30000);
+
+  test("compare with the original side by side", async () => {
+    const img = new Image();
+    Object.defineProperties(img, { naturalWidth: { value: 48 }, naturalHeight: { value: 48 }, width: { value: 48 }, height: { value: 48 } });
+    const { list } = await withResults({ image: img });
+    fireEvent.click(screen.getByLabelText(`View ${list[0].label} larger`));
+    expect(within(viewer()).queryByRole("region", { name: "Original image" }) === null).toBe(true);
+    fireEvent.click(within(viewer()).getByLabelText("Original"));
+    expect(within(viewer()).getByRole("region", { name: "Original image" })).toBeTruthy();
+  }, 30000);
+
+  test("bookmarks can be viewed too (their pattern is rebuilt)", async () => {
+    const bm = {
+      id: "b1",
+      label: "Saved one",
+      candidate: { sampling: "smooth" as const, denoise: false, maxColors: 8, dither: { mode: "none" as const, strength: 0 }, cleanup: 0, metric: "standard" as const, minBeads: 0, brightness: 0, contrast: 0, saturation: 0 },
+      thumbnail: "data:image/png;base64,AA==",
+      likeness: 70,
+      ease: 80,
+      colors: 8,
+      beads: 144,
+      strays: 2,
+      createdAt: 1,
+      context: { width: 12, brandId: "mard" },
+    };
+    renderDialog({ bookmarks: [bm] });
+    fireEvent.click(screen.getByLabelText("View Saved one larger"));
+    const v = screen.getByRole("dialog", { name: "View Saved one" });
+    expect(within(v).getByText(/^12 × 12 · \d+ colours · 144 beads$/)).toBeTruthy();
+    expect(within(v).queryByLabelText(/Bookmark/) === null).toBe(true); // already a bookmark
+  });
+});

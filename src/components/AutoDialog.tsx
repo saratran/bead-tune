@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   autoSuggest,
+  candidateSettings,
   countCombinations,
   tuneFromPreferences,
   SEARCH_OPTIONS,
@@ -31,9 +32,10 @@ import {
   type AutoPreset,
 } from "../lib/autoPresets";
 import { sameCandidate, type Bookmark } from "../lib/bookmarks";
-import type { PipelineSettings } from "../lib/pipeline";
+import { buildPattern, type PipelineSettings } from "../lib/pipeline";
 import { drawPattern, patternThumbnail } from "../lib/render";
-import type { ImageSource } from "../lib/sampling";
+import type { Crop, ImageSource } from "../lib/sampling";
+import { SuggestionViewer, type ViewerItem } from "./SuggestionViewer";
 import { RangeInput } from "./RangeInput";
 
 interface Props {
@@ -47,6 +49,11 @@ interface Props {
   bookmarks: Bookmark[];
   onBookmarksChange: (b: Bookmark[]) => void;
   onClose: () => void;
+  /** For viewing results large next to the original. */
+  image?: HTMLImageElement | null;
+  crop?: Crop;
+  boardSize?: number;
+  theme?: string;
 }
 
 const LIMITS = [100, 200, 300, 600, 1000, 2000];
@@ -183,7 +190,7 @@ function Thumbnail({ s }: { s: { pattern: RefinedSuggestion["pattern"] } }) {
   return <canvas ref={ref} className="auto-thumb" />;
 }
 
-export function AutoDialog({ source, base, results, onResults, onApply, bookmarks, onBookmarksChange, onClose }: Props) {
+export function AutoDialog({ source, base, results, onResults, onApply, bookmarks, onBookmarksChange, onClose, image, crop, boardSize = 26, theme = "dark" }: Props) {
   const [config, setConfigState] = useState<AutoConfig>(loadLastConfig);
   const [presets, setPresets] = useState<AutoPreset[]>(allPresets);
   const [presetId, setPresetIdState] = useState(() => {
@@ -199,6 +206,8 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [presetError, setPresetError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
+  // Which list is open in the large viewer, and where.
+  const [viewing, setViewing] = useState<{ from: "results" | "bookmarks"; index: number } | null>(null);
   const [showSpace, setShowSpace] = useState(!results);
   const abort = useRef<AbortController | null>(null);
 
@@ -210,10 +219,10 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
   const setSpace = <K extends keyof SearchSpace>(key: K, value: SearchSpace[K]) => setConfig({ ...config, space: { ...config.space, [key]: value } });
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !progress && naming === null && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !progress && naming === null && !viewing && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, progress, naming]);
+  }, [onClose, progress, naming, viewing]);
   useEffect(() => () => abort.current?.abort(), []);
 
   const total = countCombinations(config.space);
@@ -324,6 +333,36 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
       setPresetError((e as Error).message);
     }
   };
+
+  // Bookmarks keep only a thumbnail, so their patterns are rebuilt (cheap) when viewed.
+  const bookmarkPatterns = useRef(new Map<string, ViewerItem["pattern"]>());
+  const viewerItems = (from: "results" | "bookmarks"): ViewerItem[] =>
+    from === "results"
+      ? (results ?? []).map((s, i) => ({
+          key: `r${i}-${JSON.stringify(s.candidate)}`,
+          label: s.label,
+          tone: s.tone,
+          pattern: s.pattern,
+          scores: { features: s.features, likeness: s.likeness, ease: s.ease },
+          settings: describeCandidate(s.candidate),
+          bookmarked: !!bookmarkOf(s.candidate),
+        }))
+      : [...bookmarks].reverse().map((b) => {
+          let pattern = bookmarkPatterns.current.get(b.id);
+          if (!pattern) {
+            pattern = buildPattern(source, candidateSettings(base, b.candidate)).pattern;
+            bookmarkPatterns.current.set(b.id, pattern);
+          }
+          return {
+            key: `b-${b.id}`,
+            label: b.label,
+            tone: b.tone,
+            pattern,
+            scores: { features: b.features, likeness: b.likeness, ease: b.ease },
+            settings: describeCandidate(b.candidate),
+            bookmarked: true,
+          };
+        });
 
   const space = config.space;
   return (
@@ -558,7 +597,9 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
               <ul>
                 {[...bookmarks].reverse().map((b) => (
                   <li key={b.id} className="auto-card bookmark">
-                    <img className="auto-thumb" src={b.thumbnail} alt="" />
+                    <button className="thumb-btn" aria-label={`View ${b.label} larger`} title="View larger" onClick={() => setViewing({ from: "bookmarks", index: [...bookmarks].reverse().indexOf(b) })}>
+                      <img className="auto-thumb" src={b.thumbnail} alt="" />
+                    </button>
                     <div className="auto-card-info">
                       <div className="auto-card-title">
                         <strong>{b.label}</strong>
@@ -608,7 +649,9 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
                     <ul>
                       {group.map((s, i) => (
                   <li key={i} className="auto-card">
-                    <Thumbnail s={s} />
+                    <button className="thumb-btn" aria-label={`View ${s.label} larger`} title="View larger" onClick={() => setViewing({ from: "results", index: results.indexOf(s) })}>
+                      <Thumbnail s={s} />
+                    </button>
                     <div className="auto-card-info">
                       <div className="auto-card-title">
                         <strong>{s.label}</strong>
@@ -657,6 +700,36 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
             </div>
           )}
         </div>
+        {viewing &&
+          (() => {
+            const items = viewerItems(viewing.from);
+            if (!items.length) return null;
+            const index = Math.min(viewing.index, items.length - 1);
+            const sourceOf = (item: ViewerItem) =>
+              viewing.from === "results" ? results![items.indexOf(item)]! : [...bookmarks].reverse()[items.indexOf(item)]!;
+            return (
+              <SuggestionViewer
+                items={items}
+                index={index}
+                onIndex={(i) => setViewing({ ...viewing, index: i })}
+                onApply={(item) => {
+                  const src = sourceOf(item);
+                  setViewing(null);
+                  onApply(src);
+                }}
+                onToggleBookmark={
+                  viewing.from === "results"
+                    ? (item) => toggleBookmark(results![items.indexOf(item)]!)
+                    : undefined
+                }
+                onClose={() => setViewing(null)}
+                image={image}
+                crop={crop}
+                boardSize={boardSize}
+                theme={theme}
+              />
+            );
+          })()}
       </div>
     </div>
   );

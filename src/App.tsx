@@ -1011,6 +1011,10 @@ export function App() {
           bookmarks={bookmarks}
           onBookmarksChange={setBookmarks}
           onClose={() => setModal(null)}
+          image={image}
+          crop={crop}
+          boardSize={boardSize}
+          theme={theme}
         />
       )}
       {modal?.kind === "crop" && image && (
