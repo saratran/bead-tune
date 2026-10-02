@@ -19,8 +19,8 @@ export interface ImageSettings {
   dither: DitherMode;
   ditherStrength: number;
   cleanup: number;
-  /** Keep a one-bead empty margin round the pattern, so an outline added later fits. */
-  outlineMargin: boolean;
+  /** An empty ring of beads round the finished pattern (making it 2 beads bigger), so an outline fits. */
+  edgeMargin: boolean;
   adjustments: Adjustments;
 }
 
@@ -37,7 +37,7 @@ export const DEFAULT_IMAGE_SETTINGS: ImageSettings = {
   dither: "none",
   ditherStrength: 85,
   cleanup: 0,
-  outlineMargin: false,
+  edgeMargin: false,
   adjustments: DEFAULT_ADJUSTMENTS,
 };
 

@@ -140,7 +140,7 @@ describe("projects in the app", () => {
 
   test("an older project with the outline switched on opens with its outline drawn in as edits", async () => {
     mockPixels(redSquare);
-    const { outlineMargin: _, ...image } = DEFAULT_IMAGE_SETTINGS;
+    const { edgeMargin: _, ...image } = DEFAULT_IMAGE_SETTINGS;
     await saveProject({
       name: "Old outline",
       image: png(),
@@ -166,6 +166,9 @@ describe("projects in the app", () => {
     expect(pill()).toMatch(/· 2 colours$/);
     fireEvent.click(screen.getByText("Edit beads"));
     expect((screen.getByLabelText("Edge margin") as HTMLInputElement).checked).toBe(true);
+    // The same 52 × 52 grid as before: a 50-bead image plus the margin.
+    expect((screen.getByLabelText(/^Width/) as HTMLInputElement).value).toBe("50");
+    expect(document.querySelector(".pattern-size")!.textContent).toBe("52 × 52 beads");
   });
 
   test("a new image starts a new unsaved project", async () => {

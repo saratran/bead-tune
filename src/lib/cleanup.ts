@@ -190,6 +190,20 @@ export function addOutline(p: Pattern, color: BeadColor): Pattern {
 /** Hand edits: cell index → colour to paint, or null to remove the bead. */
 export type Edits = Map<number, BeadColor | null>;
 
+/**
+ * Moves edits made on a `w` × `h` grid by (dx, dy) onto a `toW` × `toH` grid,
+ * e.g. when an empty ring is added round the pattern. Edits that fall off are dropped.
+ */
+export function shiftEdits(edits: Edits, w: number, dx: number, dy: number, toW: number, toH: number): Edits {
+  const out: Edits = new Map();
+  for (const [i, c] of edits) {
+    const x = (i % w) + dx;
+    const y = Math.floor(i / w) + dy;
+    if (x >= 0 && y >= 0 && x < toW && y < toH) out.set(y * toW + x, c);
+  }
+  return out;
+}
+
 export function applyEdits(p: Pattern, edits: Edits): Pattern {
   if (edits.size === 0) return p;
   const { raw, palette } = editable(p);

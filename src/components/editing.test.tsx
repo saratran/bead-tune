@@ -369,7 +369,41 @@ describe("outline as an edit", () => {
     fireEvent.click(screen.getByLabelText("Edge margin"));
     await waitFor(() => expect(codeAt(0, 0)).toBeNull());
     fireEvent.click(screen.getByText("Add outline"));
-    await waitFor(() => expect(outlineCount()).toBe(2 * 52 + 2 * 50));
+    await waitFor(() => expect(outlineCount()).toBe(2 * 54 + 2 * 52)); // the ring round a 52 × 52 image on a 54 × 54 grid
+  });
+
+  test("Edge margin grows the grid and keeps hand edits in place (shifted by one)", async () => {
+    const n = await outlined();
+    let x = 0;
+    while (x < 52 && codeAt(x, 26) === null) x++;
+    fireEvent.click(screen.getByRole("radio", { name: "Erase" }));
+    stroke(x + 1, 26); // an edge bead of the shape
+    await waitFor(() => expect(codeAt(x + 1, 26)).toBeNull());
+    const size = () => document.querySelector(".pattern-size")!.textContent;
+    expect(size()).toBe("52 × 52 beads");
+
+    fireEvent.click(screen.getByLabelText("Edge margin"));
+    expect(screen.queryByRole("alertdialog") === null).toBe(true); // nothing to warn about
+    await waitFor(() => expect(size()).toBe("54 × 54 beads"));
+    expect(outlineCount()).toBe(n);
+    expect(screen.getByText(`${n + 1} beads edited by hand`)).toBeTruthy();
+    // Cells are 600/54 px now.
+    const at54 = (cx: number, cy: number) => ({ clientX: (cx + 0.5) * (600 / 54), clientY: (cy + 0.5) * (600 / 54), pointerId: 1 });
+    const code54 = (cx: number, cy: number) => {
+      fireEvent.mouseMove(canvas(), at54(cx, cy));
+      const text = document.querySelector(".pattern-status")!.textContent!;
+      return text.includes("empty peg") ? null : text.split(" · ")[1]!.trim();
+    };
+    expect(code54(x + 1, 27)).toBe(darkest.code); // the outline, one bead over
+    expect(code54(x + 2, 27)).toBeNull(); // the erased bead, still erased
+
+    // Undo still undoes the last stroke (on the shifted grid).
+    fireEvent.click(screen.getByText("Undo"));
+    await waitFor(() => expect(code54(x + 2, 27)).not.toBeNull());
+
+    fireEvent.click(screen.getByLabelText("Edge margin"));
+    await waitFor(() => expect(size()).toBe("52 × 52 beads"));
+    expect(outlineCount()).toBe(n);
   });
 
   test("warns when the outline is cut off at the edge", async () => {
@@ -459,9 +493,11 @@ describe("warning before settings change hand edits", () => {
     expect(prompt() === null).toBe(true);
   });
 
-  test("Edge margin asks (it rebuilds the pattern)", async () => {
+  test("Edge margin doesn't ask (it keeps hand edits)", async () => {
     await withEdit();
     fireEvent.click(screen.getByLabelText("Edge margin"));
-    expect(prompt()).toBeTruthy();
+    expect(prompt() === null).toBe(true);
+    await waitFor(() => expect(document.querySelector(".pattern-size")!.textContent).toBe("54 × 54 beads"));
+    expect(screen.getByText("1 bead edited by hand")).toBeTruthy();
   });
 });

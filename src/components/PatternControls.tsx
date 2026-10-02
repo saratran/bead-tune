@@ -59,7 +59,7 @@ export function EditBar({
   onClear: () => void;
   /**
    * Adds a one-bead outline round the current shape as ordinary hand edits.
-   * `margin` keeps a bead of room at the grid's edges so the outline fits.
+   * `margin` adds an empty ring round the pattern so the outline fits.
    */
   outline?: { color: BeadColor; onAdd: () => void; onChooseColor: () => void; margin: boolean; onMargin: (on: boolean) => void };
 }) {
@@ -91,7 +91,7 @@ export function EditBar({
             <span className="dot big" style={{ background: outline.color.hex }} />
             {outline.color.code}
           </button>
-          <span title="Keep one empty bead round the edges so the outline isn't cut off (rebuilds the pattern)">
+          <span title="Add an empty ring of beads round the pattern (2 beads wider and taller) so the outline isn't cut off. Your edits stay put.">
             <Toggle label="Edge margin" checked={outline.margin} onChange={outline.onMargin} />
           </span>
         </span>

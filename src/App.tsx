@@ -11,7 +11,7 @@ import { effortCost, featureCost, likenessCost, makeEvaluator, type Candidate, t
 import { imageFingerprint, loadBookmarks, mergeBookmarks, sameCandidate, saveBookmarks, type Bookmark } from "./lib/bookmarks";
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
-import { applyEdits, outlineRing, type Edits } from "./lib/cleanup";
+import { applyEdits, outlineRing, padPattern, shiftEdits, type Edits } from "./lib/cleanup";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
 import { applySwaps, type Pattern } from "./lib/pattern";
 import { buildPattern, type PipelineSettings } from "./lib/pipeline";
@@ -244,7 +244,7 @@ export function App() {
 
   const pipelineSettings = useCallback(
     (settings: ImageSettings, w: number): PipelineSettings => {
-      const { sampling, denoise, trim, cleanup, outlineMargin, ...options } = settings;
+      const { sampling, denoise, trim, cleanup, edgeMargin: _margin, ...options } = settings;
       return {
         width: Math.max(2, Math.min(300, w || 1)),
         crop,
@@ -252,9 +252,8 @@ export function App() {
         denoise,
         trim,
         cleanup,
-        // Outlines are added by hand (Edit → Add outline); the pipeline only keeps room for one.
+        // Outlines are added by hand (Edit → Add outline); the edge margin is added after swaps.
         outline: null,
-        reserveOutline: outlineMargin,
         options: { ...options, palette },
       };
     },
@@ -311,7 +310,13 @@ export function App() {
     setNotice({ text: `Applied “${sg.label}”` });
   };
 
-  const swapped = useMemo(() => (result ? applySwaps(result.pattern, swaps) : null), [result, swaps]);
+  // The edge margin pads the finished pattern, so turning it on or off keeps hand edits (shifted by one).
+  const edgeMargin = imageSettings.edgeMargin;
+  const swapped = useMemo(() => {
+    if (!result) return null;
+    const p = applySwaps(result.pattern, swaps);
+    return edgeMargin ? padPattern(p, 1) : p;
+  }, [result, swaps, edgeMargin]);
 
   // Hand edits only apply to a grid of the size they were made on; they're set
   // aside (not lost) while the size differs, and replaced by the next stroke.
@@ -373,6 +378,18 @@ export function App() {
     });
   };
 
+  /** Adds or removes the empty ring round the pattern, moving hand edits (and undo steps) with it. */
+  const setEdgeMargin = (on: boolean) => {
+    if (on === edgeMargin) return;
+    const d = on ? 1 : -1;
+    if (edits.w > 0) {
+      const shift = (m: Edits) => shiftEdits(m, edits.w, d, d, edits.w + 2 * d, edits.h + 2 * d);
+      setEdits({ w: edits.w + 2 * d, h: edits.h + 2 * d, map: shift(edits.map) });
+      setUndoStack((u) => u.map(shift));
+    }
+    setImageSettings({ ...imageSettings, edgeMargin: on });
+  };
+
   const pushUndo = () => setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), editsFit ? edits.map : new Map()]);
 
   /** Adds a one-bead outline round the shape as it is now, as hand edits (one undo step). */
@@ -391,7 +408,7 @@ export function App() {
       for (const i of ring.cells) map.set(i, outlineColor);
       return { w: pattern.width, h: pattern.height, map };
     });
-    setNotice({ text: ring.clipped && !imageSettings.outlineMargin ? "Outline added. It's cut off where the shape touches the edge: turn on Edge margin to leave room." : "Outline added" });
+    setNotice({ text: ring.clipped && !edgeMargin ? "Outline added. It's cut off where the shape touches the edge: turn on Edge margin to leave room." : "Outline added" });
   };
 
   const undo = () => {
@@ -561,11 +578,13 @@ export function App() {
     setImageBlob(blob);
     setFileName(meta.imageName || meta.name);
     setBrandId(b.id);
-    setWidth(st.width);
+    // Older projects kept the outline's margin inside the width (a live "outline" setting, then
+    // "outlineMargin"): the same grid is now width − 2 plus the edge margin. A live outline is redrawn once.
+    const { outline: liveOutline, outlineMargin: oldMargin, ...savedImage } = st.image as ImageSettings & { outline?: boolean; outlineMargin?: boolean };
+    const insideMargin = !!(liveOutline || oldMargin);
+    setWidth(insideMargin ? Math.max(2, st.width - 2) : st.width);
     setBoardInput(st.boardSize);
-    // Projects from before outlines were an edit had a live "outline" setting: keep its margin, and redraw it once.
-    const { outline: liveOutline, ...savedImage } = st.image as ImageSettings & { outline?: boolean };
-    setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...savedImage, ...(liveOutline ? { outlineMargin: true } : {}) });
+    setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...savedImage, ...(insideMargin ? { edgeMargin: true } : {}) });
     setCrop(st.crop ?? FULL_CROP);
     pendingBookmarks.current = st.bookmarks ?? null;
     setOutlineId(st.outlineId);
@@ -669,8 +688,8 @@ export function App() {
         color: outlineColor,
         onAdd: addOutlineNow,
         onChooseColor: () => setModal({ kind: "outline" }),
-        margin: imageSettings.outlineMargin,
-        onMargin: (on) => changeImageSettings({ ...imageSettings, outlineMargin: on }),
+        margin: edgeMargin,
+        onMargin: setEdgeMargin,
       }}
       onClear={clearHandEdits}
     />
@@ -859,7 +878,7 @@ export function App() {
             </div>
             {pattern && (
               <p className="hint">
-                {pattern.width} × {pattern.height} beads · {boardsX} × {boardsY} boards of {boardSize} × {boardSize}
+                {pattern.width} × {pattern.height} beads{edgeMargin ? " (with edge margin)" : ""} · {boardsX} × {boardsY} boards of {boardSize} × {boardSize}
               </p>
             )}
           </div>
