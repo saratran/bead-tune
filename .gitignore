@@ -42,3 +42,6 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local reference screenshots (third-party images; not for the repo)
+references/

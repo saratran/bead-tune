@@ -1,0 +1,13 @@
+services:
+  bead-pattern:
+    build: .
+    image: bead-pattern-generator:latest
+    container_name: bead-pattern
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+    # Starts again after crashes and reboots (Docker itself starts at boot),
+    # unless it was stopped on purpose with `docker compose stop`.
+    restart: unless-stopped

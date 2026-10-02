@@ -1,0 +1,17 @@
+node_modules
+dist
+out
+coverage
+references
+.git
+.claude
+.cursor
+*.log
+.env
+.env.*
+
+# Tests aren't needed in the image
+**/*.test.ts
+**/*.test.tsx
+src/test
+bunfig.toml

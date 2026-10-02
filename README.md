@@ -13,6 +13,14 @@ bun run typecheck
 bun run build    # static site in dist/
 ```
 
+## Run with Docker
+
+```bash
+docker compose up -d --build   # http://localhost:3000, restarts automatically (also after reboots)
+docker compose logs -f         # logs
+git pull && docker compose up -d --build   # update
+```
+
 ## Features
 
 - Drop, pick or paste an image (or try the built-in sample)
