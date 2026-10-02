@@ -1706,3 +1706,100 @@ input[type="range"] {
 .auto-card.bookmark {
   border-color: #f5b301;
 }
+
+.chip-add {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.chip-add .input {
+  width: 84px;
+  padding: 4px 8px;
+  font-size: 13px;
+  border-radius: 999px;
+}
+
+.prefer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.prefer input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+
+.prefer-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+}
+
+.prefer-bar span {
+  margin-right: auto;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.auto-card-info .row {
+  margin-top: 4px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.auto-card-info .row .btn {
+  margin-top: 0;
+}
+
+.preset-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.auto-presets .hint,
+.auto-presets .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.badge.tone {
+  cursor: default;
+}
+
+.badge.tone-vivid {
+  background: linear-gradient(90deg, #ff5c7a33, #ffc14533, #5cc8ff33);
+  color: var(--ink);
+}
+
+.badge.tone-muted {
+  background: var(--surface-hover);
+  color: var(--muted);
+}
+
+.chip-hint {
+  margin: -2px 0 4px;
+}
+
+.tone-group + .tone-group {
+  margin-top: 14px;
+}
+
+.tone-heading {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 800;
+}

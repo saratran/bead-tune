@@ -9,7 +9,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import { DEFAULT_SEARCH_SPACE, enumerateCandidates, likenessToleranceFor, makeEvaluator, objectiveFor, rate, refine, scan, SEARCH_OPTIONS, suggest, type Candidate, type SearchSpace } from "../src/lib/auto";
+import { rgbToLab } from "../src/lib/color";
+import { autoSuggest, DEFAULT_SEARCH_SPACE, effortCost, type Tone, enumerateCandidates, featureCost, likenessToleranceFor, makeEvaluator, objectiveFor, rate, refine, scan, SEARCH_OPTIONS, suggest, tuneFromPreferences, type Candidate, type SearchSpace } from "../src/lib/auto";
 import { BRANDS, DEFAULT_BRAND_ID } from "../src/lib/palettes";
 import { DEFAULT_PATTERN_OPTIONS, type Pattern } from "../src/lib/pattern";
 import type { PipelineSettings } from "../src/lib/pipeline";
@@ -74,6 +75,7 @@ const results = await scan(source, base, candidates, undefined, undefined, 1e9);
 const ms = performance.now() - t0;
 console.log(`${results.length} candidates in ${(ms / 1000).toFixed(1)}s (${(ms / results.length).toFixed(1)} ms each)`);
 const suggestions = suggest(rate(results), Number(flag("count", "8")));
+let refinedPatterns: Pattern[] = [];
 
 // ---- refinement comparison: same budget, each method, per suggestion
 if (args.includes("--compare-refine")) {
@@ -86,7 +88,7 @@ if (args.includes("--compare-refine")) {
       .concat(from.dither.strength !== to.dither.strength ? [`dither ${from.dither.strength}→${to.dither.strength}`] : [])
       .join(", ") || "no change";
   console.log(`\nrefinement, budget ${budget} per suggestion (cost: lower is better)`);
-  var refinedPatterns: Pattern[] = [];
+  refinedPatterns = [];
   console.log("label            start   pattern(Δ%)            anneal(Δ%)");
   const totals = { pattern: 0, anneal: 0, start: 0, tPattern: 0, tAnneal: 0 };
   for (const sg of suggestions) {
@@ -111,14 +113,53 @@ if (args.includes("--compare-refine")) {
 }
 
 const fmt = (n: number, d = 1) => n.toFixed(d).padStart(6);
-console.log("\n#  label            like ease  colΔE detΔE  distΔE edgeErr  noise cols strays frag  settings");
+console.log("\n#  label            feat like ease  colΔE detΔE  distΔE edgeErr featLoss noise cols strays frag  settings");
 suggestions.forEach((s, i) => {
   const m = s.metrics, c = s.candidate;
   console.log(
-    `${i + 1}  ${s.label.padEnd(15)} ${String(s.likeness).padStart(4)} ${String(s.ease).padStart(4)} ${fmt(m.colorError)} ${fmt(m.detailError)} ${fmt(m.distanceError)} ${fmt(m.edgeError, 3)} ${fmt(m.noise, 2)} ${String(m.colors).padStart(4)} ${String(m.strays).padStart(6)} ${fmt(m.fragmentation)}  ` +
+    `${i + 1}  ${s.label.padEnd(15)} ${String(s.features).padStart(4)} ${String(s.likeness).padStart(4)} ${String(s.ease).padStart(4)} ${fmt(m.colorError)} ${fmt(m.detailError)} ${fmt(m.distanceError)} ${fmt(m.edgeError, 3)} ${fmt(m.featureLoss, 3)}  ${fmt(m.noise, 2)} ${String(m.colors).padStart(4)} ${String(m.strays).padStart(6)} ${fmt(m.fragmentation)}  ` +
       `${c.sampling}${c.denoise ? "+denoise" : ""} ${c.maxColors}c ${c.dither.mode}${c.dither.mode !== "none" ? c.dither.strength : ""} clean${c.cleanup} b${c.brightness} c${c.contrast} s${c.saturation} ${c.metric}`,
   );
 });
+
+// ---- colour tones: --tones natural,vivid,muted
+if (args.includes("--tones")) {
+  const tones = flag("tones", "natural,vivid,muted").split(",") as Tone[];
+  const t0 = performance.now();
+  const out = await autoSuggest(source, base, { space, count: 4, limit, tones, refine: { method: "pattern", budget: 20 } });
+  const ref = sampleGrid(source, width, FULL_CROP, "smooth", false);
+  let refChroma = 0;
+  for (let i = 0; i < ref.width * ref.height; i++) {
+    const [, a, b] = rgbToLab(ref.data[i * 4]!, ref.data[i * 4 + 1]!, ref.data[i * 4 + 2]!);
+    refChroma += Math.hypot(a, b);
+  }
+  refChroma /= ref.width * ref.height;
+  console.log(`\ntones (${((performance.now() - t0) / 1000).toFixed(1)}s): mean bead chroma = average colour intensity of the beads; original ${refChroma.toFixed(1)}`);
+  const chroma = (p: Pattern) => p.colors.reduce((sum, c, i) => sum + Math.hypot(c.lab[1], c.lab[2]) * p.counts[i]!, 0) / Math.max(1, p.total);
+  for (const t of tones) {
+    const group = out.filter((s) => s.tone === t);
+    const avg = group.reduce((n, s) => n + chroma(s.pattern), 0) / Math.max(1, group.length);
+    console.log(`${t.padEnd(8)} avg chroma ${avg.toFixed(1)}`);
+    for (const s of group) console.log(`   ${s.label.padEnd(15)} chroma ${chroma(s.pattern).toFixed(1).padStart(5)}  sat ${String(s.candidate.saturation).padStart(4)}  contrast ${String(s.candidate.contrast).padStart(4)}  ${s.metrics.colors} colours`);
+  }
+}
+
+// ---- tuning from the user's picks: --prefer 2,3 (suggestion numbers)
+if (args.includes("--prefer")) {
+  const picks = flag("prefer", "2").split(",").map((n) => suggestions[Number(n) - 1]!).filter(Boolean);
+  const tuned = await tuneFromPreferences(source, base, picks, { count: picks.length, refine: { method: "pattern", budget: Number(flag("budget", "40")) } });
+  console.log("\ntuned from picks:");
+  for (const t of tuned) {
+    const from = picks.find((p) => `Tuned: ${p.label}` === t.label)!;
+    const fm = from.metrics, m = t.metrics;
+    console.log(`${t.label.padEnd(22)} featureCost ${featureCost(fm).toFixed(3)} → ${featureCost(m).toFixed(3)}  effort ${effortCost(fm).toFixed(3)} → ${effortCost(m).toFixed(3)}  colours ${fm.colors} → ${m.colors}`);
+    console.log(`                       ${JSON.stringify(from.candidate)}\n                     → ${JSON.stringify(t.candidate)}`);
+  }
+  refinedPatterns = picks.map(() => undefined as unknown as Pattern);
+  tuned.forEach((t, i) => (refinedPatterns[i] = t.pattern));
+  suggestions.splice(0, suggestions.length, ...picks.flatMap((p, i) => [p, { ...p, pattern: tuned[i]?.pattern ?? p.pattern }]));
+  refinedPatterns = suggestions.map((s) => s.pattern);
+}
 
 // ---- contact sheet: reference + suggestions, CELL px per bead, GAP between
 const CELL = Number(flag("cell", "6")), GAP = 12, PER_ROW = Number(flag("cols", "5"));
@@ -126,7 +167,7 @@ const reference = sampleGrid(source, width, FULL_CROP, "smooth", false);
 const tiles: { w: number; h: number; px: (x: number, y: number) => [number, number, number] }[] = [
   { w: reference.width, h: reference.height, px: (x, y) => [reference.data[(y * reference.width + x) * 4]!, reference.data[(y * reference.width + x) * 4 + 1]!, reference.data[(y * reference.width + x) * 4 + 2]!] },
   ...suggestions.map((s, i) => {
-    const p: Pattern = (typeof refinedPatterns !== "undefined" && refinedPatterns[i]) || s.pattern;
+    const p: Pattern = refinedPatterns[i] || s.pattern;
     return { w: p.width, h: p.height, px: (x: number, y: number): [number, number, number] => {
       const idx = p.cells[y * p.width + x]!;
       return idx < 0 ? [255, 255, 255] : p.colors[idx]!.rgb;

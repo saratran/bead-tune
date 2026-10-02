@@ -2,7 +2,7 @@
  * Bookmarked Auto suggestions. Stored per image (by a fingerprint of its
  * pixels), so they survive new Auto runs, reloads and reopening the image.
  */
-import type { Candidate } from "./auto";
+import type { Candidate, Tone } from "./auto";
 import { FULL_CROP, type ImageSource } from "./sampling";
 
 export interface Bookmark {
@@ -11,13 +11,16 @@ export interface Bookmark {
   candidate: Candidate;
   /** PNG data URL of the pattern when it was bookmarked. */
   thumbnail: string;
-  /** Scores within the scan it came from. */
+  /** Scores within the scan it came from (features is missing on older bookmarks). */
+  features?: number;
   likeness: number;
   ease: number;
   colors: number;
   beads: number;
   strays: number;
   createdAt: number;
+  /** The colour tone it was chosen for (natural if missing). */
+  tone?: Tone;
   /** What the pattern was made with; applying it later uses your current width and bead set. */
   context: { width: number; brandId: string };
 }

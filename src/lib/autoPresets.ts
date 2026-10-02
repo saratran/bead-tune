@@ -1,5 +1,5 @@
 /** Auto mode presets: built-in starting points plus the user's own, saved in this browser. */
-import { DEFAULT_SEARCH_SPACE, SEARCH_OPTIONS, type RefineMethod, type SearchSpace } from "./auto";
+import { DEFAULT_SEARCH_SPACE, SEARCH_OPTIONS, type RefineMethod, type SearchSpace, type Tone } from "./auto";
 
 export interface RefineConfig {
   enabled: boolean;
@@ -18,6 +18,8 @@ export interface AutoConfig {
   limit: number;
   /** Fine-tuning of each suggestion after the grid search. */
   refine: RefineConfig;
+  /** Colour tones to find suggestions for. */
+  tones: Tone[];
 }
 
 export interface AutoPreset extends AutoConfig {
@@ -28,7 +30,7 @@ export interface AutoPreset extends AutoConfig {
 
 const none = { mode: "none" as const, strength: 0 };
 
-export const BUILT_IN_PRESETS: AutoPreset[] = [
+const BUILT_INS: Omit<AutoPreset, "tones">[] = [
   {
     id: "builtin:balanced",
     name: "Balanced (default)",
@@ -104,8 +106,11 @@ export const BUILT_IN_PRESETS: AutoPreset[] = [
   },
 ];
 
+export const BUILT_IN_PRESETS: AutoPreset[] = BUILT_INS.map((p) => ({ ...p, tones: ["natural"] }));
+
 const PRESETS_KEY = "bead-pattern:auto-presets";
 const CONFIG_KEY = "bead-pattern:auto-config";
+const PRESET_ID_KEY = "bead-pattern:auto-preset";
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -129,6 +134,7 @@ function normalise(config: Partial<AutoConfig>): AutoConfig {
     limit: config.limit ?? 300,
     space: { ...DEFAULT_SEARCH_SPACE, ...config.space },
     refine: { ...DEFAULT_REFINE, ...config.refine },
+    tones: config.tones?.length ? config.tones : ["natural"],
   };
 }
 
@@ -140,13 +146,52 @@ export function allPresets(): AutoPreset[] {
   return [...BUILT_IN_PRESETS, ...userPresets()];
 }
 
-/** Saves the config under `name`, replacing a user preset with the same name. */
-export function savePreset(name: string, config: AutoConfig): AutoPreset {
+/** `name`, or "name (2)", "name (3)"… if another preset already uses it. */
+function uniqueName(name: string, exceptId?: string): string {
   const clean = name.trim() || "My preset";
-  const others = userPresets().filter((p) => p.name !== clean);
-  const preset: AutoPreset = { id: `user:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: clean, ...normalise(config) };
-  write(PRESETS_KEY, [...others, preset]);
+  const taken = new Set(allPresets().filter((p) => p.id !== exceptId).map((p) => p.name));
+  if (!taken.has(clean)) return clean;
+  let n = 2;
+  while (taken.has(`${clean} (${n})`)) n++;
+  return `${clean} (${n})`;
+}
+
+const newId = () => `user:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+/** Create: saves the config as a new preset (the name is made unique). */
+export function createPreset(name: string, config: AutoConfig): AutoPreset {
+  const preset: AutoPreset = { id: newId(), name: uniqueName(name), ...normalise(config) };
+  write(PRESETS_KEY, [...userPresets(), preset]);
   return preset;
+}
+
+/** @deprecated kept for older callers: same as createPreset. */
+export const savePreset = createPreset;
+
+function changeUserPreset(id: string, change: (p: AutoPreset) => AutoPreset): AutoPreset {
+  const list = userPresets();
+  const i = list.findIndex((p) => p.id === id);
+  if (i < 0) throw new Error(id.startsWith("builtin:") ? "Built-in presets can't be changed — duplicate it first." : "That preset no longer exists.");
+  list[i] = change(list[i]!);
+  write(PRESETS_KEY, list);
+  return list[i]!;
+}
+
+/** Update: replaces a user preset's settings, keeping its name. */
+export function updatePreset(id: string, config: AutoConfig): AutoPreset {
+  return changeUserPreset(id, (p) => ({ ...p, ...normalise(config) }));
+}
+
+/** Update: renames a user preset (the name is made unique). */
+export function renamePreset(id: string, name: string): AutoPreset {
+  return changeUserPreset(id, (p) => ({ ...p, name: uniqueName(name, id) }));
+}
+
+/** Create from existing: an editable copy of any preset, built-in or not. */
+export function duplicatePreset(id: string): AutoPreset {
+  const source = allPresets().find((p) => p.id === id);
+  if (!source) throw new Error("That preset no longer exists.");
+  return createPreset(`${source.name.replace(/ \(default\)$/, "")} copy`, source);
 }
 
 export function deletePreset(id: string): void {
@@ -156,6 +201,12 @@ export function deletePreset(id: string): void {
   );
 }
 
+/** Whether `config` matches the preset's settings. */
+export function sameConfig(a: AutoConfig, b: AutoConfig): boolean {
+  const pick = (c: AutoConfig) => JSON.stringify({ space: c.space, count: c.count, limit: c.limit, refine: c.refine, tones: [...c.tones].sort() });
+  return pick(normalise(a)) === pick(normalise(b));
+}
+
 /** The configuration used last time (or the default preset). */
 export function loadLastConfig(): AutoConfig {
   return normalise(read<Partial<AutoConfig>>(CONFIG_KEY, BUILT_IN_PRESETS[0]!));
@@ -163,4 +214,13 @@ export function loadLastConfig(): AutoConfig {
 
 export function saveLastConfig(config: AutoConfig): void {
   write(CONFIG_KEY, config);
+}
+
+/** The preset selected last time ("" for none). */
+export function loadLastPresetId(): string {
+  return read<string>(PRESET_ID_KEY, "builtin:balanced");
+}
+
+export function saveLastPresetId(id: string): void {
+  write(PRESET_ID_KEY, id);
 }

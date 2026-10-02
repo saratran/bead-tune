@@ -11,6 +11,20 @@ import type { DitherMode, Pattern } from "./pattern";
 import { buildPattern, type PipelineSettings } from "./pipeline";
 import { sampleGrid, type ImageSource } from "./sampling";
 
+// ---------------------------------------------------------------- colour tone
+
+/**
+ * The look you're after. Likeness is measured against the original with its
+ * colour intensity (Lab chroma) scaled, so "vivid" rewards richer colours and
+ * "muted" softer ones, instead of strict accuracy.
+ */
+export type Tone = "natural" | "vivid" | "muted";
+export const TONES: Tone[] = ["natural", "vivid", "muted"];
+export const TONE_CHROMA: Record<Tone, number> = { natural: 1, vivid: 1.25, muted: 0.75 };
+export const TONE_LABEL: Record<Tone, string> = { natural: "Natural", vivid: "Vivid", muted: "Muted" };
+/** Extra saturation values tried for a tone, so the grid can reach that look. */
+const TONE_SATURATION: Record<Tone, number[]> = { natural: [], vivid: [25, 50], muted: [-25, -50] };
+
 // ---------------------------------------------------------------- search space
 
 export interface DitherChoice {
@@ -61,9 +75,9 @@ export const SEARCH_OPTIONS = {
   ] as DitherChoice[],
   cleanup: [0, 1, 2, 3],
   minBeads: [0, 3, 6, 10],
-  brightness: [-20, -10, 0, 10, 20],
-  contrast: [-10, 0, 15, 30],
-  saturation: [-20, 0, 20, 40],
+  brightness: [-50, -35, -20, -10, 0, 10, 20, 35, 50],
+  contrast: [-40, -20, -10, 0, 15, 30, 50, 70],
+  saturation: [-50, -20, 0, 20, 40, 60, 80],
 };
 
 export interface Candidate {
@@ -138,8 +152,15 @@ export interface Metrics {
   distanceError: number;
   /** 1 − correlation of edge strength: are outlines/features where the original has them? */
   edgeError: number;
+  /** How much of the original's strongest edges (outlines, features) the pattern lost, 0–1. */
+  featureLoss: number;
   /** Speckle the original doesn't have: mean extra bead-to-neighbourhood ΔE. */
   noise: number;
+  /**
+   * How far the pattern's overall colour intensity is from the target tone's
+   * (relative): 0 = just as vivid as wanted.
+   */
+  toneError: number;
   colors: number;
   beads: number;
   /** Beads with no neighbour of the same colour. */
@@ -155,7 +176,7 @@ interface Grid {
   lab: Float32Array;
 }
 
-function labGridFromImage(img: ImageData): Grid {
+function labGridFromImage(img: ImageData, chroma = 1): Grid {
   const n = img.width * img.height;
   const lab = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
@@ -165,8 +186,8 @@ function labGridFromImage(img: ImageData): Grid {
     }
     const [L, a, b] = rgbToLab(img.data[i * 4]!, img.data[i * 4 + 1]!, img.data[i * 4 + 2]!);
     lab[i * 3] = L;
-    lab[i * 3 + 1] = a;
-    lab[i * 3 + 2] = b;
+    lab[i * 3 + 1] = a * chroma;
+    lab[i * 3 + 2] = b * chroma;
   }
   return { w: img.width, h: img.height, lab };
 }
@@ -243,16 +264,23 @@ function correlation(a: Float32Array, b: Float32Array): number {
  * Scores `pattern` against `reference` (the unadjusted original, smooth-sampled
  * on the pattern's grid). Pattern cell (x, y) ↔ reference cell (x − offsetX, y − offsetY).
  */
+/** Share of cells with the strongest original edges that count as "features". */
+const FEATURE_SHARE = 0.15;
+/** Ignore near-flat images: edges weaker than this (ΔL per Sobel) aren't features. */
+const MIN_FEATURE_EDGE = 8;
+
 /** Share of cells (most detailed first) used for detailError. */
 const DETAIL_SHARE = 0.15;
 
-export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0, offsetY = 0): Metrics {
+export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0, offsetY = 0, chroma = 1): Metrics {
   const { width: w, height: h } = pattern;
   const ref: Grid = { w, h, lab: new Float32Array(w * h * 3).fill(NaN) };
   const pat: Grid = { w, h, lab: new Float32Array(w * h * 3).fill(NaN) };
-  const refFull = labGridFromImage(reference);
+  const refFull = labGridFromImage(reference, chroma);
   let colorSum = 0;
   let compared = 0;
+  let patChroma = 0;
+  let refChroma = 0;
   const cellError = new Float32Array(w * h).fill(NaN);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -267,6 +295,8 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
         cellError[i] = e;
         colorSum += e;
         compared++;
+        patChroma += Math.hypot(pattern.colors[idx]!.lab[1], pattern.colors[idx]!.lab[2]);
+        refChroma += Math.hypot(ref.lab[i * 3 + 1]!, ref.lab[i * 3 + 2]!);
       }
     }
   }
@@ -280,7 +310,19 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
   }
 
   // Edges on lightly blurred images: features count, single-bead dither speckle much less.
-  const edgeError = 1 - correlation(edges(bp), edges(br));
+  const patEdges = edges(bp);
+  const refEdges = edges(br);
+  const edgeError = 1 - correlation(patEdges, refEdges);
+
+  // Feature loss: of the original's strongest edges (top FEATURE_SHARE), how many
+  // have no comparable edge in the pattern? Outlines, eyes and contours live here.
+  const strong: number[] = [];
+  for (let i = 0; i < refEdges.length; i++) if (!Number.isNaN(refEdges[i]!) && !Number.isNaN(patEdges[i]!)) strong.push(i);
+  strong.sort((a, b) => refEdges[b]! - refEdges[a]!);
+  const featureCells = strong.slice(0, Math.max(1, Math.round(strong.length * FEATURE_SHARE))).filter((i) => refEdges[i]! > MIN_FEATURE_EDGE);
+  // Soft loss: a feature whose edge is half as strong counts as half lost.
+  const lost = featureCells.reduce((sum, i) => sum + Math.min(1, Math.max(0, 1 - patEdges[i]! / refEdges[i]!)), 0);
+  const featureLoss = featureCells.length ? lost / featureCells.length : 0;
 
   // Detail: the cells where the original differs most from its surroundings
   // (top DETAIL_SHARE). Small features like eyes barely move the overall mean.
@@ -335,7 +377,10 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
     detailError,
     distanceError: distN ? distSum / distN : 0,
     edgeError,
+    featureLoss,
     noise: noiseN ? noiseSum / noiseN : 0,
+    // Relative to the target's intensity, with a floor so near-grey images don't explode it.
+    toneError: compared ? Math.abs(patChroma - refChroma) / compared / Math.max(5, refChroma / compared) : 0,
     colors: pattern.colors.length,
     beads: pattern.total,
     strays,
@@ -347,7 +392,7 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
 
 /** Relative weights; tuned on real images (see scripts/tune-auto.ts). */
 export const WEIGHTS = {
-  likeness: { color: 0.25, detail: 0.25, distance: 0.2, edge: 0.1, noise: 0.2 },
+  likeness: { color: 0.22, detail: 0.22, distance: 0.17, edge: 0.08, noise: 0.16, tone: 0.15 },
   effort: { colors: 0.45, strays: 0.35, fragmentation: 0.2 },
 };
 
@@ -355,6 +400,8 @@ export interface Scored {
   candidate: Candidate;
   pattern: Pattern;
   metrics: Metrics;
+  /** 0–100 within this scan: how well outlines and fine features survive. */
+  features: number;
   /** 0–100 within this scan: how close to the original. */
   likeness: number;
   /** 0–100 within this scan: how easy to make (few colours, few strays, big areas). */
@@ -382,6 +429,8 @@ export function rate(results: { candidate: Candidate; pattern: Pattern; metrics:
     distance: normaliser(m.map((x) => x.distanceError)),
     edge: normaliser(m.map((x) => x.edgeError)),
     noise: normaliser(m.map((x) => x.noise)),
+    featureLoss: normaliser(m.map((x) => x.featureLoss)),
+    tone: normaliser(m.map((x) => x.toneError)),
     // Log scale: going from 12 to 24 colours matters as much as 32 to 64.
     colors: normaliser(m.map((x) => Math.log(x.colors))),
     strays: normaliser(m.map((x) => x.strays / Math.max(1, x.beads))),
@@ -390,11 +439,12 @@ export function rate(results: { candidate: Candidate; pattern: Pattern; metrics:
   const L = WEIGHTS.likeness, E = WEIGHTS.effort;
   return results.map((r) => {
     const x = r.metrics;
-    const bad = L.color * n.color(x.colorError) + L.detail * n.detail(x.detailError) + L.distance * n.distance(x.distanceError) + L.edge * n.edge(x.edgeError) + L.noise * n.noise(x.noise);
+    const bad = L.color * n.color(x.colorError) + L.detail * n.detail(x.detailError) + L.distance * n.distance(x.distanceError) + L.edge * n.edge(x.edgeError) + L.noise * n.noise(x.noise) + L.tone * n.tone(x.toneError);
     const effort = E.colors * n.colors(Math.log(x.colors)) + E.strays * n.strays(x.strays / Math.max(1, x.beads)) + E.fragmentation * n.fragmentation(x.fragmentation);
     return {
       ...r,
       likeness: Math.round((1 - bad) * 100),
+      features: Math.round((1 - (0.4 * n.featureLoss(x.featureLoss) + 0.35 * n.detail(x.detailError) + 0.25 * n.edge(x.edgeError))) * 100),
       ease: Math.round((1 - effort) * 100),
       colorLoad: n.colors(Math.log(x.colors)),
     };
@@ -464,7 +514,7 @@ export function suggest(scored: Scored[], count: number): Suggestion[] {
   const decent = scored.filter((s) => s.likeness >= 50);
 
   // Every pick prefers fewer colours when the look is about the same.
-  add(best(scored, (s) => s.likeness - COLOR_PENALTY * s.colorLoad), "Most faithful", "Closest to the original");
+  add(best(scored, (s) => (s.likeness + s.features) / 2 - COLOR_PENALTY * s.colorLoad), "Most faithful", "Closest to the original, features included");
   const top = Math.max(...scored.map((s) => s.likeness));
   const close = scored.filter((s) => s.likeness >= top - BALANCED_WITHIN);
   add(best(close, (s) => -s.colorLoad * 100 + s.likeness * 0.1 + s.ease * 0.05), "Balanced", "Nearly as faithful, with fewer colours");
@@ -515,22 +565,31 @@ export interface Evaluated {
  * Builds and scores candidates, caching results (refinement revisits points)
  * and the reference images they're compared against.
  */
-export function makeEvaluator(source: ImageSource, base: PipelineSettings) {
+type Built = { pattern: Pattern; sampled: NonNullable<ReturnType<typeof buildPattern>["sampled"]> } | null;
+
+export function makeEvaluator(source: ImageSource, base: PipelineSettings, tone: Tone = "natural", builds = new Map<string, Built>()) {
   const references = new Map<string, ImageData>();
   const cache = new Map<string, Evaluated | null>();
   return (c: Candidate): Evaluated | null => {
     const key = JSON.stringify(c);
     if (cache.has(key)) return cache.get(key)!;
-    const { pattern, sampled } = buildPattern(source, candidateSettings(base, c));
+    // Building is the slow part; scoring for another tone reuses the build.
+    let built = builds.get(key);
+    if (built === undefined) {
+      const { pattern, sampled } = buildPattern(source, candidateSettings(base, c));
+      built = pattern.total > 0 && sampled ? { pattern, sampled } : null;
+      builds.set(key, built);
+    }
     let result: Evaluated | null = null;
-    if (pattern.total > 0 && sampled) {
+    if (built) {
+      const { pattern, sampled } = built;
       const refKey = `${sampled.width}@${sampled.crop.x},${sampled.crop.y},${sampled.crop.w},${sampled.crop.h}`;
       let reference = references.get(refKey);
       if (!reference) {
         reference = sampleGrid(source, sampled.width, sampled.crop, "smooth", false);
         references.set(refKey, reference);
       }
-      result = { candidate: c, pattern, metrics: scorePattern(pattern, reference, sampled.offsetX, sampled.offsetY) };
+      result = { candidate: c, pattern, metrics: scorePattern(pattern, reference, sampled.offsetX, sampled.offsetY, TONE_CHROMA[tone]) };
     }
     cache.set(key, result);
     return result;
@@ -576,7 +635,19 @@ export async function scan(
 
 /** 0 ≈ perfect; ~1 ≈ poor. */
 export function likenessCost(m: Metrics): number {
-  return 0.25 * (m.colorError / 10) + 0.25 * (m.detailError / 10) + 0.2 * (m.distanceError / 8) + 0.1 * (m.edgeError / 0.15) + 0.2 * (m.noise / 4);
+  return (
+    0.22 * (m.colorError / 10) +
+    0.22 * (m.detailError / 10) +
+    0.17 * (m.distanceError / 8) +
+    0.08 * (m.edgeError / 0.15) +
+    0.16 * (m.noise / 4) +
+    0.15 * (m.toneError / 0.3)
+  );
+}
+
+/** 0 ≈ every outline and fine feature kept; ~1 ≈ most lost. */
+export function featureCost(m: Metrics): number {
+  return 0.35 * (m.detailError / 10) + 0.35 * (m.featureLoss / 0.15) + 0.3 * (m.edgeError / 0.15);
 }
 
 /** Colour count on a log scale: 0 at 2 colours, 1 at 120. */
@@ -597,17 +668,20 @@ export function likenessToleranceFor(label: string): number {
   return label === "Simplest" ? 0.04 : 0.03;
 }
 
-/** What each kind of suggestion is fine-tuned for (lower is better). */
+/**
+ * What each kind of suggestion is fine-tuned for (lower is better). Keeping the
+ * original's features comes first; overall colour likeness and ease follow.
+ */
 export function objectiveFor(label: string): (m: Metrics) => number {
   switch (label) {
     case "Simplest":
-      return (m) => effortCost(m) + 0.35 * likenessCost(m);
+      return (m) => effortCost(m) + 0.6 * featureCost(m);
     case "Balanced":
-      return (m) => likenessCost(m) + 0.35 * effortCost(m);
+      return (m) => featureCost(m) + 0.3 * likenessCost(m) + 0.35 * effortCost(m);
     case "Alternative":
-      return (m) => likenessCost(m) + 0.2 * effortCost(m);
-    default: // Most faithful, Smooth shading, Crisp
-      return (m) => likenessCost(m) + 0.06 * colorCost(m);
+      return (m) => featureCost(m) + 0.3 * likenessCost(m) + 0.2 * effortCost(m);
+    default: // Most faithful, Smooth shading, Crisp, and tuning from preferences
+      return (m) => featureCost(m) + 0.5 * likenessCost(m) + 0.05 * colorCost(m);
   }
 }
 
@@ -621,6 +695,8 @@ export interface RefineOptions {
   seed?: number;
   /** Max fractional loss of likeness allowed versus the starting point (default 3%). */
   likenessTolerance?: number;
+  /** If set, results must not be harder to make than this (effortCost). */
+  maxEffortCost?: number;
 }
 
 /** A continuous setting refinement may move, with its range and step sizes. */
@@ -636,9 +712,9 @@ interface Dim {
 
 const DIMS: Dim[] = [
   { key: "maxColors", lo: 2, hi: 120, step: Math.log(1.35), minStep: Math.log(1.04), log: true },
-  { key: "brightness", lo: -60, hi: 60, step: 10, minStep: 2 },
-  { key: "contrast", lo: -60, hi: 60, step: 10, minStep: 2 },
-  { key: "saturation", lo: -60, hi: 80, step: 10, minStep: 2 },
+  { key: "brightness", lo: -100, hi: 100, step: 10, minStep: 2 },
+  { key: "contrast", lo: -100, hi: 100, step: 10, minStep: 2 },
+  { key: "saturation", lo: -100, hi: 100, step: 10, minStep: 2 },
   // Dithered styles stay dithered: below ~30% it's barely there.
   { key: "ditherStrength", lo: 30, hi: 100, step: 15, minStep: 3 },
 ];
@@ -689,7 +765,8 @@ export async function refine(
   const tried: Evaluated[] = [];
   const maxLikenessCost = likenessCost(start.metrics) * (1 + (opts.likenessTolerance ?? 0.03));
   // Out-of-bounds results count as infinitely bad.
-  const cost = (m: Metrics) => (likenessCost(m) > maxLikenessCost ? Infinity : objective(m));
+  const maxEffort = opts.maxEffortCost ?? Infinity;
+  const cost = (m: Metrics) => (likenessCost(m) > maxLikenessCost || effortCost(m) > maxEffort ? Infinity : objective(m));
   let best = start;
   let bestCost = cost(start.metrics);
   let spent = 0;
@@ -773,14 +850,24 @@ export interface AutoOptions {
   limit: number;
   /** Fine-tune each suggestion's continuous settings after the grid search. */
   refine?: RefineOptions | null;
+  /** Colour tones to find suggestions for (default: natural only). */
+  tones?: Tone[];
 }
 
 export interface RefinedSuggestion extends Suggestion {
   /** The grid candidate this was fine-tuned from (absent if refinement didn't help). */
   refinedFrom?: Candidate;
+  /** The colour tone this suggestion was chosen for. */
+  tone?: Tone;
 }
 
-/** Grid search → suggestions → (optionally) fine-tune each one. */
+/** The search space for a tone: adds saturation values that lead towards it. */
+export function spaceForTone(space: SearchSpace, tone: Tone): SearchSpace {
+  const extra = TONE_SATURATION[tone].filter((v) => !space.saturation.includes(v));
+  return extra.length ? { ...space, saturation: [...space.saturation, ...extra].sort((a, b) => a - b) } : space;
+}
+
+/** Grid search → suggestions → (optionally) fine-tune each one, for each colour tone. */
 export async function autoSuggest(
   source: ImageSource,
   base: PipelineSettings,
@@ -788,39 +875,145 @@ export async function autoSuggest(
   onProgress?: (p: ScanProgress) => void,
   signal?: AbortSignal,
 ): Promise<RefinedSuggestion[]> {
-  const evaluate = makeEvaluator(source, base);
-  const grid = await scan(source, base, enumerateCandidates(options.space, options.limit), onProgress, signal, 24, evaluate);
-  if (!grid.length) return [];
-  const picks = suggest(rate(grid), options.count);
-  if (!options.refine || signal?.aborted) return picks;
+  const tones = options.tones?.length ? options.tones : (["natural"] as Tone[]);
+  const builds = new Map<string, Built>();
+  const plans = tones.map((tone) => ({ tone, candidates: enumerateCandidates(spaceForTone(options.space, tone), options.limit) }));
+  const searchTotal = plans.reduce((n, p) => n + p.candidates.length, 0);
+  const refineTotal = options.refine ? tones.length * options.count * options.refine.budget : 0;
+  let searchDone = 0;
+  let refineDone = 0;
 
-  const total = picks.length * options.refine.budget;
-  let done = 0;
-  const pool: Evaluated[] = [...grid];
-  const refined: { label: string; reason: string; from: Candidate; best: Evaluated }[] = [];
-  for (const [n, pick] of picks.entries()) {
+  const out: RefinedSuggestion[] = [];
+  for (const { tone, candidates } of plans) {
     if (signal?.aborted) break;
-    const { best, tried } = await refine(
-      evaluate,
-      pick,
-      objectiveFor(pick.label),
-      { likenessTolerance: likenessToleranceFor(pick.label), ...options.refine, seed: (options.refine.seed ?? 1) + n },
-      signal,
-      () => onProgress?.({ phase: "refine", done: ++done, total }),
-    );
-    pool.push(...tried);
-    refined.push({ label: pick.label, reason: pick.reason, from: pick.candidate, best });
+    const evaluate = makeEvaluator(source, base, tone, builds);
+    const offset = searchDone;
+    const grid = await scan(source, base, candidates, (p) => onProgress?.({ phase: "search", done: offset + p.done, total: searchTotal }), signal, 24, evaluate);
+    searchDone += candidates.length;
+    if (!grid.length) continue;
+    const picks = suggest(rate(grid), options.count);
+
+    let finals: RefinedSuggestion[] = picks;
+    if (options.refine && !signal?.aborted) {
+      const pool: Evaluated[] = [...grid];
+      const refined: { label: string; reason: string; from: Candidate; best: Evaluated }[] = [];
+      for (const [n, pick] of picks.entries()) {
+        if (signal?.aborted) break;
+        const { best, tried } = await refine(
+          evaluate,
+          pick,
+          objectiveFor(pick.label),
+          { likenessTolerance: likenessToleranceFor(pick.label), ...options.refine, seed: (options.refine.seed ?? 1) + n },
+          signal,
+          () => onProgress?.({ phase: "refine", done: ++refineDone, total: refineTotal }),
+        );
+        pool.push(...tried);
+        refined.push({ label: pick.label, reason: pick.reason, from: pick.candidate, best });
+      }
+      // Re-rate everything together so the 0–100 scores stay comparable.
+      const rated = new Map(rate(pool).map((r) => [JSON.stringify(r.candidate), r]));
+      finals = [];
+      for (const r of refined) {
+        const s = rated.get(JSON.stringify(r.best.candidate))!;
+        if (finals.some((o) => difference(o.pattern, s.pattern) < MIN_DIFFERENCE)) continue;
+        const changed = JSON.stringify(r.best.candidate) !== JSON.stringify(r.from);
+        finals.push({ ...s, label: r.label, reason: r.reason, ...(changed ? { refinedFrom: r.from } : {}) });
+      }
+    }
+    // A pattern already suggested for another tone isn't repeated.
+    for (const f of finals) if (!out.some((o) => difference(o.pattern, f.pattern) < MIN_DIFFERENCE)) out.push({ ...f, tone });
+  }
+  if (options.refine) onProgress?.({ phase: "refine", done: refineTotal, total: refineTotal });
+  return out;
+}
+
+// ---------------------------------------------------------------- tuning from the user's picks
+
+/** Close variations of a pick: flip one categorical choice at a time. */
+export function neighbours(c: Candidate): Candidate[] {
+  const out: Candidate[] = [
+    { ...c, sampling: c.sampling === "smooth" ? "sharp" : "smooth" },
+    { ...c, denoise: !c.denoise },
+    { ...c, metric: c.metric === "standard" ? "accurate" : "standard" },
+  ];
+  if (c.cleanup > 0) out.push({ ...c, cleanup: c.cleanup - 1 });
+  if (c.cleanup < 3) out.push({ ...c, cleanup: c.cleanup + 1 });
+  if (c.minBeads > 0) out.push({ ...c, minBeads: 0 });
+  else out.push({ ...c, minBeads: 3 });
+  if (c.dither.mode === "none") out.push({ ...c, dither: { mode: "diffusion", strength: 40 } });
+  else out.push({ ...c, dither: { mode: "none", strength: 0 } }, { ...c, dither: { mode: c.dither.mode === "diffusion" ? "ordered" : "diffusion", strength: c.dither.strength } });
+  return out;
+}
+
+export interface PreferenceSeed {
+  label: string;
+  candidate: Candidate;
+  /** Tune towards this colour tone (default natural). */
+  tone?: Tone;
+}
+
+/**
+ * "More like this": for each pick, try its close variations and fine-tune the
+ * best, keeping the pick's level of simplicity and maximising preserved features.
+ */
+export async function tuneFromPreferences(
+  source: ImageSource,
+  base: PipelineSettings,
+  seeds: PreferenceSeed[],
+  options: { count: number; refine: RefineOptions },
+  onProgress?: (p: ScanProgress) => void,
+  signal?: AbortSignal,
+): Promise<RefinedSuggestion[]> {
+  const builds = new Map<string, Built>();
+  const evaluators = new Map<Tone, (c: Candidate) => Evaluated | null>();
+  const evaluatorFor = (tone: Tone) => {
+    if (!evaluators.has(tone)) evaluators.set(tone, makeEvaluator(source, base, tone, builds));
+    return evaluators.get(tone)!;
+  };
+  const objective = objectiveFor("Most faithful");
+  const perSeed = neighbours(seeds[0]?.candidate ?? ({} as Candidate)).length + options.refine.budget;
+  const total = Math.max(1, seeds.length * perSeed);
+  let done = 0;
+  const step = () => onProgress?.({ phase: "refine", done: ++done, total });
+  const pools = new Map<Tone, Evaluated[]>();
+  const results: { label: string; reason: string; from: Candidate; best: Evaluated; cost: number; tone: Tone }[] = [];
+
+  for (const [n, seed] of seeds.entries()) {
+    if (signal?.aborted) break;
+    const tone = seed.tone ?? "natural";
+    const evaluate = evaluatorFor(tone);
+    if (!pools.has(tone)) pools.set(tone, []);
+    const pool = pools.get(tone)!;
+    const start = evaluate(seed.candidate);
+    step();
+    if (!start) continue;
+    pool.push(start);
+    // Stay at (or below) the pick's level of effort; allow a hair of slack.
+    const maxEffortCost = effortCost(start.metrics) * 1.05;
+    const allowed = (m: Metrics) => effortCost(m) <= maxEffortCost && likenessCost(m) <= likenessCost(start.metrics) * 1.03;
+    let best = start;
+    for (const c of neighbours(seed.candidate)) {
+      if (signal?.aborted) break;
+      const r = evaluate(c);
+      step();
+      if (!r) continue;
+      pool.push(r);
+      if (allowed(r.metrics) && objective(r.metrics) < objective(best.metrics)) best = r;
+      await yieldToBrowser();
+    }
+    const tuned = await refine(evaluate, best, objective, { ...options.refine, seed: (options.refine.seed ?? 1) + n, maxEffortCost, likenessTolerance: 0.03 }, signal, step);
+    pool.push(...tuned.tried);
+    results.push({ label: `Tuned: ${seed.label}`, reason: "Your pick, adjusted to keep more of the original's features", from: seed.candidate, best: tuned.best, cost: objective(tuned.best.metrics), tone });
   }
   onProgress?.({ phase: "refine", done: total, total });
 
-  // Re-rate everything together so the 0–100 scores stay comparable.
-  const rated = new Map(rate(pool).map((r) => [JSON.stringify(r.candidate), r]));
+  const rated = new Map([...pools].map(([tone, pool]) => [tone, new Map(rate(pool).map((r) => [JSON.stringify(r.candidate), r]))]));
   const out: RefinedSuggestion[] = [];
-  for (const r of refined) {
-    const s = rated.get(JSON.stringify(r.best.candidate))!;
-    if (out.some((o) => difference(o.pattern, s.pattern) < MIN_DIFFERENCE)) continue;
+  for (const r of results.sort((a, b) => a.cost - b.cost)) {
+    const s = rated.get(r.tone)!.get(JSON.stringify(r.best.candidate))!;
+    if (out.length >= options.count || out.some((o) => difference(o.pattern, s.pattern) < MIN_DIFFERENCE / 2)) continue;
     const changed = JSON.stringify(r.best.candidate) !== JSON.stringify(r.from);
-    out.push({ ...s, label: r.label, reason: r.reason, ...(changed ? { refinedFrom: r.from } : {}) });
+    out.push({ ...s, label: r.label, tone: r.tone, reason: changed ? r.reason : "Already the best version of this pick", ...(changed ? { refinedFrom: r.from } : {}) });
   }
   return out;
 }

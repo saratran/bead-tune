@@ -2,15 +2,34 @@ import { useEffect, useRef, useState } from "react";
 import {
   autoSuggest,
   countCombinations,
+  tuneFromPreferences,
   SEARCH_OPTIONS,
   type Candidate,
   type DitherChoice,
+  type PreferenceSeed,
   type RefinedSuggestion,
   type RefineMethod,
   type ScanProgress,
   type SearchSpace,
+  type Tone,
+  TONE_LABEL,
+  TONES,
 } from "../lib/auto";
-import { allPresets, deletePreset, loadLastConfig, saveLastConfig, savePreset, type AutoConfig, type AutoPreset } from "../lib/autoPresets";
+import {
+  allPresets,
+  createPreset,
+  deletePreset,
+  duplicatePreset,
+  loadLastConfig,
+  loadLastPresetId,
+  renamePreset,
+  sameConfig,
+  saveLastConfig,
+  saveLastPresetId,
+  updatePreset,
+  type AutoConfig,
+  type AutoPreset,
+} from "../lib/autoPresets";
 import { sameCandidate, type Bookmark } from "../lib/bookmarks";
 import type { PipelineSettings } from "../lib/pipeline";
 import { drawPattern, patternThumbnail } from "../lib/render";
@@ -62,9 +81,38 @@ export function describeCandidate(c: Candidate): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-/** Multi-select row of chips; at least one stays selected. */
-function Chips<T>({ label, options, selected, same = (a, b) => a === b, format, onChange }: { label: string; options: T[]; selected: T[]; same?: (a: T, b: T) => boolean; format: (v: T) => string; onChange: (v: T[]) => void }) {
+/** Multi-select row of chips; at least one stays selected. Numeric rows can take custom values. */
+function Chips<T>({
+  label,
+  options: base,
+  selected,
+  same = (a, b) => a === b,
+  format,
+  onChange,
+  custom,
+}: {
+  label: string;
+  options: T[];
+  selected: T[];
+  same?: (a: T, b: T) => boolean;
+  format: (v: T) => string;
+  onChange: (v: T[]) => void;
+  /** Allow adding any whole number in this range. */
+  custom?: { min: number; max: number };
+}) {
   const isOn = (v: T) => selected.some((s) => same(s, v));
+  // Custom values already selected show up as chips too.
+  const options = custom
+    ? ([...new Set([...(base as number[]), ...(selected as number[])])].sort((a, b) => a - b) as T[])
+    : base;
+  const [draft, setDraft] = useState("");
+  const addCustom = () => {
+    const n = Math.round(Number(draft));
+    if (!custom || draft.trim() === "" || !Number.isFinite(n)) return;
+    const v = Math.min(custom.max, Math.max(custom.min, n)) as T;
+    if (!isOn(v)) onChange([...selected, v].sort((a, b) => (a as number) - (b as number)));
+    setDraft("");
+  };
   return (
     <div className="chip-row" role="group" aria-label={label}>
       <span className="chip-label">{label}</span>
@@ -84,8 +132,40 @@ function Chips<T>({ label, options, selected, same = (a, b) => a === b, format, 
             </button>
           );
         })}
+        {custom && (
+          <form
+            className="chip-add"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addCustom();
+            }}
+          >
+            <input
+              type="number"
+              className="input"
+              aria-label={`Add ${label.toLowerCase()} value`}
+              placeholder="+ value"
+              title={`Any whole number from ${custom.min} to ${custom.max} (values outside are clamped)`}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <button type="submit" className="chip" disabled={draft.trim() === ""} aria-label={`Add ${label.toLowerCase()}`}>
+              Add
+            </button>
+          </form>
+        )}
       </div>
     </div>
+  );
+}
+
+/** "Prefer" checkbox. A top-level component so it isn't remounted on every render (keeps focus). */
+function PreferBox({ label, checked, onToggle }: { label: string; checked: boolean; onToggle: () => void }) {
+  return (
+    <label className="prefer">
+      <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`Prefer ${label}`} />
+      Prefer
+    </label>
   );
 }
 
@@ -106,16 +186,26 @@ function Thumbnail({ s }: { s: { pattern: RefinedSuggestion["pattern"] } }) {
 export function AutoDialog({ source, base, results, onResults, onApply, bookmarks, onBookmarksChange, onClose }: Props) {
   const [config, setConfigState] = useState<AutoConfig>(loadLastConfig);
   const [presets, setPresets] = useState<AutoPreset[]>(allPresets);
-  const [presetId, setPresetId] = useState("");
-  const [naming, setNaming] = useState<string | null>(null);
+  const [presetId, setPresetIdState] = useState(() => {
+    const id = loadLastPresetId();
+    return allPresets().some((p) => p.id === id) ? id : "";
+  });
+  const setPresetId = (id: string) => {
+    setPresetIdState(id);
+    saveLastPresetId(id);
+  };
+  // Name being typed for a new preset ("create") or the selected one ("rename").
+  const [naming, setNaming] = useState<{ kind: "create" | "rename"; name: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [presetError, setPresetError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [showSpace, setShowSpace] = useState(!results);
   const abort = useRef<AbortController | null>(null);
 
+  // Editing keeps the preset selected; it shows as "(modified)" until saved or reverted.
   const setConfig = (c: AutoConfig) => {
     setConfigState(c);
     saveLastConfig(c);
-    setPresetId("");
   };
   const setSpace = <K extends keyof SearchSpace>(key: K, value: SearchSpace[K]) => setConfig({ ...config, space: { ...config.space, [key]: value } });
 
@@ -137,7 +227,13 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
     const found = await autoSuggest(
       source,
       base,
-      { space: config.space, count: config.count, limit: config.limit, refine: config.refine.enabled ? { method: config.refine.method, budget: config.refine.budget } : null },
+      {
+        space: config.space,
+        count: config.count,
+        limit: config.limit,
+        tones: config.tones,
+        refine: config.refine.enabled ? { method: config.refine.method, budget: config.refine.budget } : null,
+      },
       setProgress,
       ctrl.signal,
     );
@@ -145,6 +241,34 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
     setProgress(null);
     if (found.length) {
       onResults(found);
+      setShowSpace(false);
+    }
+  };
+
+  // Picks the user prefers, to tune further ("more like this").
+  const [preferred, setPreferred] = useState<PreferenceSeed[]>([]);
+  const isPreferred = (c: Candidate) => preferred.some((p) => sameCandidate(p.candidate, c));
+  const togglePreferred = (seed: PreferenceSeed) =>
+    setPreferred((list) => (list.some((p) => sameCandidate(p.candidate, seed.candidate)) ? list.filter((p) => !sameCandidate(p.candidate, seed.candidate)) : [...list, seed]));
+
+  const tune = async (seeds: PreferenceSeed[]) => {
+    if (!seeds.length) return;
+    const ctrl = new AbortController();
+    abort.current = ctrl;
+    setProgress({ phase: "refine", done: 0, total: 1 });
+    const found = await tuneFromPreferences(
+      source,
+      base,
+      seeds.map((s) => ({ label: s.label.replace(/^Tuned: /, ""), candidate: s.candidate, tone: s.tone })),
+      { count: seeds.length, refine: { method: config.refine.method, budget: Math.max(40, config.refine.budget) } },
+      setProgress,
+      ctrl.signal,
+    );
+    abort.current = null;
+    setProgress(null);
+    if (found.length) {
+      onResults(found);
+      setPreferred([]);
       setShowSpace(false);
     }
   };
@@ -164,6 +288,8 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
         candidate: s.candidate,
         thumbnail: patternThumbnail(s.pattern),
         likeness: s.likeness,
+        features: s.features,
+        tone: s.tone,
         ease: s.ease,
         colors: s.metrics.colors,
         beads: s.metrics.beads,
@@ -175,14 +301,29 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
   };
 
   const choosePreset = (id: string) => {
+    setConfirmDelete(false);
+    setNaming(null);
     const p = presets.find((x) => x.id === id);
-    if (!p) return;
-    const c = { space: p.space, count: p.count, limit: p.limit, refine: p.refine };
+    if (!p) return setPresetId("");
+    const c = { space: p.space, count: p.count, limit: p.limit, refine: p.refine, tones: p.tones };
     setConfigState(c);
     saveLastConfig(c);
     setPresetId(id);
   };
   const current = presets.find((p) => p.id === presetId);
+  const modified = !!current && !sameConfig(config, current);
+
+  /** Runs a preset change, refreshes the list, and selects the result. */
+  const presetAction = (fn: () => AutoPreset | void) => {
+    setPresetError(null);
+    try {
+      const result = fn();
+      setPresets(allPresets());
+      if (result) setPresetId(result.id);
+    } catch (e) {
+      setPresetError((e as Error).message);
+    }
+  };
 
   const space = config.space;
   return (
@@ -199,66 +340,125 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
           <div className="auto-presets">
             <label htmlFor="auto-preset">Preset</label>
             <select id="auto-preset" className="input" value={presetId} onChange={(e) => choosePreset(e.target.value)}>
-              <option value="">{presetId ? "—" : "Custom"}</option>
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
+              {!current && <option value="">Custom</option>}
+              <optgroup label="Built-in">
+                {presets
+                  .filter((p) => p.builtIn)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {p.id === presetId && modified ? " (modified)" : ""}
+                    </option>
+                  ))}
+              </optgroup>
+              {presets.some((p) => !p.builtIn) && (
+                <optgroup label="My presets">
+                  {presets
+                    .filter((p) => !p.builtIn)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {p.id === presetId && modified ? " (modified)" : ""}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
             </select>
-            {naming === null ? (
-              <>
-                <button className="btn btn-ghost" onClick={() => setNaming(current && !current.builtIn ? current.name : "")}>
-                  Save preset…
-                </button>
-                {current && !current.builtIn && (
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      deletePreset(current.id);
-                      setPresets(allPresets());
-                      setPresetId("");
-                    }}
-                  >
-                    Delete preset
-                  </button>
-                )}
-              </>
-            ) : (
+
+            {naming ? (
               <form
                 className="row"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  const p = savePreset(naming, config);
-                  setPresets(allPresets());
-                  setPresetId(p.id);
+                  const { kind, name } = naming;
+                  presetAction(() => (kind === "create" ? createPreset(name, config) : renamePreset(presetId, name)));
                   setNaming(null);
                 }}
               >
-                <input className="input" aria-label="Preset name" placeholder="Preset name" value={naming} autoFocus onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setNaming(null)} />
+                <input
+                  className="input"
+                  aria-label={naming.kind === "create" ? "New preset name" : "Preset name"}
+                  placeholder="Preset name"
+                  value={naming.name}
+                  autoFocus
+                  onChange={(e) => setNaming({ ...naming, name: e.target.value })}
+                  onKeyDown={(e) => e.key === "Escape" && setNaming(null)}
+                />
                 <button type="submit" className="btn btn-primary">
-                  Save
+                  {naming.kind === "create" ? "Create" : "Rename"}
                 </button>
                 <button type="button" className="btn btn-ghost" onClick={() => setNaming(null)}>
                   Cancel
                 </button>
               </form>
+            ) : confirmDelete && current ? (
+              <div className="row" role="group" aria-label="Confirm delete">
+                <span className="small">Delete “{current.name}”?</span>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => {
+                    presetAction(() => deletePreset(current.id));
+                    setPresetId("");
+                    setConfirmDelete(false);
+                  }}
+                >
+                  Delete
+                </button>
+                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
+                  Keep
+                </button>
+              </div>
+            ) : (
+              <div className="row preset-actions">
+                {current && !current.builtIn && (
+                  <button className="btn btn-primary" disabled={!modified} onClick={() => presetAction(() => updatePreset(current.id, config))}>
+                    Save changes
+                  </button>
+                )}
+                {current && modified && (
+                  <button className="btn btn-ghost" onClick={() => choosePreset(current.id)}>
+                    Revert
+                  </button>
+                )}
+                <button className="btn btn-ghost" onClick={() => setNaming({ kind: "create", name: current ? `${current.name.replace(/ \(default\)$/, "")}${modified ? " (edited)" : " copy"}` : "" })}>
+                  New preset…
+                </button>
+                {current && (
+                  <button className="btn btn-ghost" onClick={() => presetAction(() => duplicatePreset(current.id))}>
+                    Duplicate
+                  </button>
+                )}
+                {current && !current.builtIn && (
+                  <>
+                    <button className="btn btn-ghost" onClick={() => setNaming({ kind: "rename", name: current.name })}>
+                      Rename…
+                    </button>
+                    <button className="btn btn-ghost" onClick={() => setConfirmDelete(true)}>
+                      Delete…
+                    </button>
+                  </>
+                )}
+              </div>
             )}
+            {current?.builtIn && modified && <p className="hint">Built-in presets can't be changed: save your edits as a new preset.</p>}
+            {presetError && <p className="error">{presetError}</p>}
           </div>
 
           <details className="auto-space" open={showSpace} onToggle={(e) => setShowSpace((e.target as HTMLDetailsElement).open)}>
             <summary>Search space</summary>
             <p className="hint">Auto keeps your bead set, width, crop, background and outline as they are, and tries every combination of the values selected below.</p>
+            <Chips label="Colour tone" options={TONES} selected={config.tones} format={(t: Tone) => TONE_LABEL[t]} onChange={(tones) => setConfig({ ...config, tones })} />
+            <p className="hint chip-hint">Natural aims for accurate colours; Vivid and Muted aim for a richer or softer look. Pick several to get suggestions for each.</p>
             <Chips label="Sampling" options={["smooth", "sharp"] as ("smooth" | "sharp")[]} selected={space.sampling} format={(v) => (v === "smooth" ? "Smooth" : "Sharp")} onChange={(v) => setSpace("sampling", v)} />
             <Chips label="Noise smoothing" options={[false, true]} selected={space.denoise} format={(v) => (v ? "On" : "Off")} onChange={(v) => setSpace("denoise", v)} />
-            <Chips label="Colours" options={SEARCH_OPTIONS.maxColors} selected={space.maxColors} format={String} onChange={(v) => setSpace("maxColors", v)} />
+            <Chips label="Colours" options={SEARCH_OPTIONS.maxColors} selected={space.maxColors} format={String} onChange={(v) => setSpace("maxColors", v)} custom={{ min: 2, max: 120 }} />
             <Chips label="Dithering" options={SEARCH_OPTIONS.dither} selected={space.dither} same={sameDither} format={ditherLabel} onChange={(v) => setSpace("dither", v)} />
             <Chips label="Remove stray beads" options={SEARCH_OPTIONS.cleanup} selected={space.cleanup} format={(v) => (v === 0 ? "Off" : String(v))} onChange={(v) => setSpace("cleanup", v)} />
             <Chips label="Min beads per colour" options={SEARCH_OPTIONS.minBeads} selected={space.minBeads} format={(v) => (v === 0 ? "Off" : String(v))} onChange={(v) => setSpace("minBeads", v)} />
             <Chips label="Colour matching" options={["standard", "accurate"] as ("standard" | "accurate")[]} selected={space.metric} format={(v) => (v === "standard" ? "Standard" : "Accurate (slower)")} onChange={(v) => setSpace("metric", v)} />
-            <Chips label="Brightness" options={SEARCH_OPTIONS.brightness} selected={space.brightness} format={signed} onChange={(v) => setSpace("brightness", v)} />
-            <Chips label="Contrast" options={SEARCH_OPTIONS.contrast} selected={space.contrast} format={signed} onChange={(v) => setSpace("contrast", v)} />
-            <Chips label="Saturation" options={SEARCH_OPTIONS.saturation} selected={space.saturation} format={signed} onChange={(v) => setSpace("saturation", v)} />
+            <Chips label="Brightness" options={SEARCH_OPTIONS.brightness} selected={space.brightness} format={signed} onChange={(v) => setSpace("brightness", v)} custom={{ min: -100, max: 100 }} />
+            <Chips label="Contrast" options={SEARCH_OPTIONS.contrast} selected={space.contrast} format={signed} onChange={(v) => setSpace("contrast", v)} custom={{ min: -100, max: 100 }} />
+            <Chips label="Saturation" options={SEARCH_OPTIONS.saturation} selected={space.saturation} format={signed} onChange={(v) => setSpace("saturation", v)} custom={{ min: -100, max: 100 }} />
             <div className="auto-limits">
               <div className="field">
                 <label htmlFor="auto-count">
@@ -316,6 +516,7 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
           <div className="auto-run">
             <span className="muted small" data-testid="auto-count">
               {total.toLocaleString()} combination{total === 1 ? "" : "s"}
+              {config.tones.length > 1 && ` × ${config.tones.length} tones`}
               {total > trying && ` · trying an even spread of ${trying.toLocaleString()}`}
               {accurate && " · Accurate matching is several times slower"}
             </span>
@@ -337,6 +538,20 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
             )}
           </div>
 
+          {preferred.length > 0 && !progress && (
+            <div className="prefer-bar" role="status">
+              <span>
+                {preferred.length} preferred: {preferred.map((p) => p.label).join(", ")}
+              </span>
+              <button className="btn btn-primary" onClick={() => void tune(preferred)}>
+                Tune selected ({preferred.length})
+              </button>
+              <button className="btn btn-ghost" onClick={() => setPreferred([])}>
+                Clear
+              </button>
+            </div>
+          )}
+
           {bookmarks.length > 0 && (
             <section className="auto-bookmarks" aria-label="Bookmarks">
               <h4>★ Bookmarks ({bookmarks.length})</h4>
@@ -345,8 +560,12 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
                   <li key={b.id} className="auto-card bookmark">
                     <img className="auto-thumb" src={b.thumbnail} alt="" />
                     <div className="auto-card-info">
-                      <strong>{b.label}</strong>
+                      <div className="auto-card-title">
+                        <strong>{b.label}</strong>
+                        {b.tone && b.tone !== "natural" && <span className={`badge tone tone-${b.tone}`}>{TONE_LABEL[b.tone]}</span>}
+                      </div>
                       <div className="auto-scores small">
+                        {b.features !== undefined && <span>Features {b.features}</span>}
                         <span>Likeness {b.likeness}</span>
                         <span>Ease {b.ease}</span>
                       </div>
@@ -359,9 +578,13 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
                         <button className="btn btn-primary" onClick={() => onApply(b)}>
                           Use this
                         </button>
+                        <button className="btn btn-ghost" disabled={!!progress} onClick={() => void tune([b])}>
+                          More like this
+                        </button>
                         <button className="btn btn-ghost" onClick={() => onBookmarksChange(bookmarks.filter((x) => x.id !== b.id))}>
                           Remove
                         </button>
+                        <PreferBox label={b.label} checked={isPreferred(b.candidate)} onToggle={() => togglePreferred(b)} />
                       </div>
                     </div>
                   </li>
@@ -372,15 +595,24 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
 
           {results && !progress && (
             <div className="auto-results">
-              <h4>Suggestions</h4>
-              <p className="hint">Scores compare the suggestions with each other: likeness to your original image, and ease of making (fewer colours and stray beads).</p>
-              <ul>
-                {results.map((s, i) => (
+              <h4>{results.length && results.every((r) => r.label.startsWith("Tuned:")) ? "Based on your picks" : "Suggestions"}</h4>
+              <p className="hint">
+                Scores compare the suggestions with each other: features (outlines and fine details kept), likeness (overall colour) and ease (fewer colours and stray beads).
+              </p>
+              {(() => {
+                // Group by colour tone; headings only when there's more than one.
+                const groups = TONES.map((t) => [t, results.filter((r) => (r.tone ?? "natural") === t)] as const).filter(([, g]) => g.length > 0);
+                return groups.map(([tone, group]) => (
+                  <section key={tone} className="tone-group" aria-label={`${TONE_LABEL[tone]} suggestions`}>
+                    {groups.length > 1 && <h5 className="tone-heading">{TONE_LABEL[tone]}</h5>}
+                    <ul>
+                      {group.map((s, i) => (
                   <li key={i} className="auto-card">
                     <Thumbnail s={s} />
                     <div className="auto-card-info">
                       <div className="auto-card-title">
                         <strong>{s.label}</strong>
+                        {s.tone && s.tone !== "natural" && <span className={`badge tone tone-${s.tone}`}>{TONE_LABEL[s.tone]}</span>}
                         {s.refinedFrom && (
                           <span className="badge" title={`Fine-tuned: ${describeChanges(s.refinedFrom, s.candidate)}`}>
                             Fine-tuned
@@ -398,20 +630,30 @@ export function AutoDialog({ source, base, results, onResults, onApply, bookmark
                       </div>
                       <span className="muted small">{s.reason}</span>
                       <div className="auto-scores small">
-                        <span>Likeness {s.likeness}</span>
-                        <span>Ease {s.ease}</span>
+                        <span title="How well outlines and fine features survive">Features {s.features}</span>
+                        <span title="Overall colour closeness to the original">Likeness {s.likeness}</span>
+                        <span title="Fewer colours, fewer stray beads, bigger areas">Ease {s.ease}</span>
                       </div>
                       <span className="small">
                         {s.metrics.colors} colours · {s.metrics.beads.toLocaleString()} beads · {s.metrics.strays} stray
                       </span>
                       <span className="muted small auto-settings">{describeCandidate(s.candidate)}</span>
-                      <button className="btn btn-primary" onClick={() => onApply(s)}>
-                        Use this
-                      </button>
+                      <div className="row">
+                        <button className="btn btn-primary" onClick={() => onApply(s)}>
+                          Use this
+                        </button>
+                        <button className="btn btn-ghost" disabled={!!progress} onClick={() => void tune([s])}>
+                          More like this
+                        </button>
+                        <PreferBox label={s.label} checked={isPreferred(s.candidate)} onToggle={() => togglePreferred(s)} />
+                      </div>
                     </div>
                   </li>
                 ))}
-              </ul>
+                    </ul>
+                  </section>
+                ));
+              })()}
             </div>
           )}
         </div>

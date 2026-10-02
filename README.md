@@ -45,7 +45,10 @@ git pull && docker compose up -d --build   # update
   suggestion is fine-tuned on its continuous settings (brightness, contrast, saturation, exact
   colour count, dither strength) by pattern search (default) or simulated annealing, within a
   likeness guard rail. Bookmark (★) suggestions: kept per image across runs and reloads, and
-  saved inside projects
+  saved inside projects. Scores: Features (outlines/fine detail kept), Likeness (colour) and
+  Ease; fine-tuning aims mainly at keeping features. "Prefer" / "More like this" tunes around
+  your picks at the same simplicity. Colour tone (Natural / Vivid / Muted, multi-select)
+  targets a richer or softer look. Presets: create, rename, save changes, duplicate, delete
 - Fullscreen viewer/editor: fit-to-screen, zoom (buttons, +/−/0, Ctrl/⌘+wheel, pinch), drag to
   pan, all display and edit tools, Esc to exit, Ctrl/⌘+Z to undo
 - Works on phones: fits narrow screens, touch-sized controls, drag-to-paint on touch

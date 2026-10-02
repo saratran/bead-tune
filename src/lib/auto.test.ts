@@ -1,15 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { makePattern, mard } from "../test/fixtures";
 import { padPattern } from "./cleanup";
+import { rgbToLab as rgbLab } from "./color";
 import {
   autoSuggest,
   candidateSettings,
   colorCost,
   effortCost,
+  featureCost,
   likenessCost,
   makeEvaluator,
+  neighbours,
   objectiveFor,
   refine,
+  spaceForTone,
+  TONE_CHROMA,
+  tuneFromPreferences,
   countCombinations,
   DEFAULT_SEARCH_SPACE,
   difference,
@@ -118,7 +124,7 @@ describe("scorePattern", () => {
 });
 
 describe("rate and suggest", () => {
-  const m = (over: Partial<Metrics>): Metrics => ({ colorError: 5, detailError: 5, distanceError: 5, edgeError: 0.1, noise: 1, colors: 20, beads: 100, strays: 10, fragmentation: 10, ...over });
+  const m = (over: Partial<Metrics>): Metrics => ({ colorError: 5, detailError: 5, distanceError: 5, edgeError: 0.1, featureLoss: 0.2, noise: 1, toneError: 0.05, colors: 20, beads: 100, strays: 10, fragmentation: 10, ...over });
   const cand = (over: Partial<Candidate>): Candidate => ({ ...enumerateCandidates(tiny)[0]!, ...over });
   // Distinct patterns so suggestions aren't treated as duplicates.
   const pat = (seed: number) => makePattern(Array.from({ length: 4 }, (_, y) => Array.from({ length: 4 }, (_, x) => ((x + y + seed) % 3 === 0 ? "a" : "b")).join("")));
@@ -260,10 +266,135 @@ describe("refinement", () => {
 });
 
 test("fixed costs: lower is better and in sensible ranges", () => {
-  const good: Metrics = { colorError: 3, detailError: 4, distanceError: 2, edgeError: 0.03, noise: 0.5, colors: 12, beads: 1000, strays: 10, fragmentation: 5 };
-  const bad: Metrics = { colorError: 12, detailError: 15, distanceError: 9, edgeError: 0.2, noise: 5, colors: 100, beads: 1000, strays: 400, fragmentation: 50 };
+  const good: Metrics = { colorError: 3, detailError: 4, distanceError: 2, edgeError: 0.03, featureLoss: 0.05, noise: 0.5, toneError: 0.02, colors: 12, beads: 1000, strays: 10, fragmentation: 5 };
+  const bad: Metrics = { colorError: 12, detailError: 15, distanceError: 9, edgeError: 0.2, featureLoss: 0.6, noise: 5, toneError: 0.5, colors: 100, beads: 1000, strays: 400, fragmentation: 50 };
   expect(likenessCost(good)).toBeLessThan(likenessCost(bad));
   expect(effortCost(good)).toBeLessThan(effortCost(bad));
   expect(colorCost({ ...good, colors: 2 })).toBeCloseTo(0);
   expect(colorCost({ ...good, colors: 120 })).toBeCloseTo(1);
+});
+
+describe("features", () => {
+  test("losing an outline raises featureLoss; a faithful copy has none", () => {
+    // A dark vertical bar on light: strong edges either side.
+    const withBar = makePattern(Array.from({ length: 10 }, () => "aaaabbaaaa"), [mard.find((c) => c.lab[0] > 85)!, mard.find((c) => c.lab[0] < 25)!]);
+    const ref = referenceOf(withBar);
+    const noBar = makePattern(Array.from({ length: 10 }, () => "aaaaaaaaaa"), [withBar.colors[0]!]);
+    expect(scorePattern(withBar, ref).featureLoss).toBeCloseTo(0, 5);
+    expect(scorePattern(noBar, ref).featureLoss).toBeGreaterThan(0.5);
+  });
+
+  test("a flat original has no features to lose", () => {
+    const flat = makePattern(Array.from({ length: 6 }, () => "aaaaaa"));
+    expect(scorePattern(flat, referenceOf(flat)).featureLoss).toBe(0);
+  });
+
+  test("featureCost grows with lost features, detail error and edge error", () => {
+    const base: Metrics = { colorError: 5, detailError: 5, distanceError: 5, edgeError: 0.05, featureLoss: 0.05, noise: 1, toneError: 0.05, colors: 20, beads: 100, strays: 5, fragmentation: 10 };
+    expect(featureCost({ ...base, featureLoss: 0.2 })).toBeGreaterThan(featureCost(base));
+    expect(featureCost({ ...base, detailError: 9 })).toBeGreaterThan(featureCost(base));
+    expect(featureCost({ ...base, edgeError: 0.15 })).toBeGreaterThan(featureCost(base));
+  });
+});
+
+describe("tuning from picks", () => {
+  const img = makeImageData(64, 64);
+  for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+    const eye = (x - 40) ** 2 + (y - 24) ** 2 < 4 ** 2;
+    const stripe = x > 10 && x < 14;
+    img.data.set(eye || stripe ? [20, 20, 30, 255] : [120 + x, 90 + y, 150 - x / 2, 255], (y * 64 + x) * 4);
+  }
+  const source = imageDataSource(img);
+  const base: PipelineSettings = { width: 16, sampling: "smooth", denoise: false, trim: false, cleanup: 0, outline: null, crop: FULL_CROP, options: { ...DEFAULT_PATTERN_OPTIONS, palette: mard } };
+  const pick: Candidate = { sampling: "smooth", denoise: false, maxColors: 8, dither: { mode: "none", strength: 0 }, cleanup: 1, metric: "standard", minBeads: 0, brightness: 25, contrast: 0, saturation: 0 };
+
+  test("neighbours flip one choice at a time", () => {
+    const n = neighbours(pick);
+    expect(n.some((c) => c.sampling === "sharp")).toBe(true);
+    expect(n.some((c) => c.denoise)).toBe(true);
+    expect(n.some((c) => c.metric === "accurate")).toBe(true);
+    expect(n.some((c) => c.cleanup === 0) && n.some((c) => c.cleanup === 2)).toBe(true);
+    expect(n.some((c) => c.dither.mode === "diffusion")).toBe(true);
+    for (const c of n) {
+      const diffs = (Object.keys(pick) as (keyof Candidate)[]).filter((k) => JSON.stringify(c[k]) !== JSON.stringify(pick[k]));
+      expect(diffs).toHaveLength(1);
+    }
+  });
+
+  test("keeps the pick's simplicity and doesn't lose features", async () => {
+    const evaluate = makeEvaluator(source, base);
+    const start = evaluate(pick)!;
+    const out = await tuneFromPreferences(source, base, [{ label: "Balanced", candidate: pick }], { count: 1, refine: { method: "pattern", budget: 30 } });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.label).toBe("Tuned: Balanced");
+    expect(effortCost(out[0]!.metrics)).toBeLessThanOrEqual(effortCost(start.metrics) * 1.05 + 1e-9);
+    expect(featureCost(out[0]!.metrics)).toBeLessThanOrEqual(featureCost(start.metrics) + 1e-9);
+  });
+
+  test("several picks give one result each (unless they end up the same)", async () => {
+    const out = await tuneFromPreferences(
+      source,
+      base,
+      [
+        { label: "A", candidate: pick },
+        { label: "B", candidate: { ...pick, maxColors: 24, cleanup: 0, brightness: 0 } },
+      ],
+      { count: 2, refine: { method: "pattern", budget: 10 } },
+    );
+    expect(out.length).toBeGreaterThanOrEqual(1);
+    expect(out.length).toBeLessThanOrEqual(2);
+    expect(out.every((s) => s.label.startsWith("Tuned: "))).toBe(true);
+  });
+});
+
+describe("colour tone", () => {
+  // Reference: one mid-saturated colour everywhere.
+  const ref = makeImageData(6, 6);
+  for (let i = 0; i < 36; i++) ref.data.set([180, 110, 90, 255], i * 4);
+  const refChroma = Math.hypot(...(rgbLab(180, 110, 90).slice(1) as [number, number]));
+  // Bead colours from the chart: the closest greyer, similar and richer versions.
+  const byChroma = (target: number) => mard.reduce((a, b) => (Math.abs(Math.hypot(b.lab[1], b.lab[2]) - target) + Math.abs(b.lab[0] - 55) < Math.abs(Math.hypot(a.lab[1], a.lab[2]) - target) + Math.abs(a.lab[0] - 55) ? b : a));
+  const flatOf = (c: (typeof mard)[number]) => makePattern(Array(6).fill("aaaaaa"), [c]);
+  const muted = flatOf(byChroma(refChroma * 0.6));
+  const rich = flatOf(byChroma(refChroma * 1.4));
+
+  test("vivid prefers richer beads, muted prefers softer ones", () => {
+    expect(scorePattern(rich, ref, 0, 0, TONE_CHROMA.vivid).toneError).toBeLessThan(scorePattern(muted, ref, 0, 0, TONE_CHROMA.vivid).toneError);
+    expect(scorePattern(muted, ref, 0, 0, TONE_CHROMA.muted).toneError).toBeLessThan(scorePattern(rich, ref, 0, 0, TONE_CHROMA.muted).toneError);
+  });
+
+  test("tone error is 0 when the intensity matches", () => {
+    const exact = flatOf(byChroma(refChroma));
+    const m = scorePattern(exact, referenceOf(exact));
+    expect(m.toneError).toBeCloseTo(0, 5);
+  });
+
+  test("each tone adds saturation values that lead towards it", () => {
+    expect(spaceForTone(DEFAULT_SEARCH_SPACE, "natural")).toBe(DEFAULT_SEARCH_SPACE);
+    expect(spaceForTone(DEFAULT_SEARCH_SPACE, "vivid").saturation).toEqual(expect.arrayContaining([25, 50]));
+    expect(spaceForTone(DEFAULT_SEARCH_SPACE, "muted").saturation).toEqual(expect.arrayContaining([-25, -50]));
+  });
+
+  test("autoSuggest groups suggestions by tone, and vivid ends up more colourful than muted", async () => {
+    const img = makeImageData(48, 48);
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) img.data.set([170 + x, 100 + y, 80, 255], (y * 48 + x) * 4);
+    const base: PipelineSettings = { width: 12, sampling: "smooth", denoise: false, trim: false, cleanup: 0, outline: null, crop: FULL_CROP, options: { ...DEFAULT_PATTERN_OPTIONS, palette: mard } };
+    const space: SearchSpace = { ...tiny, saturation: [0], maxColors: [8, 16] };
+    const out = await autoSuggest(imageDataSource(img), base, { space, count: 2, limit: 100, tones: ["vivid", "muted"], refine: null });
+    const chroma = (p: Pattern) => p.colors.reduce((s, c, i) => s + Math.hypot(c.lab[1], c.lab[2]) * p.counts[i]!, 0) / p.total;
+    const vivid = out.filter((s) => s.tone === "vivid");
+    const mutedOut = out.filter((s) => s.tone === "muted");
+    expect(vivid.length).toBeGreaterThan(0);
+    expect(mutedOut.length).toBeGreaterThan(0);
+    expect(chroma(vivid[0]!.pattern)).toBeGreaterThan(chroma(mutedOut[0]!.pattern));
+  });
+
+  test("tuning a vivid pick stays vivid", async () => {
+    const img = makeImageData(48, 48);
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) img.data.set([170 + x, 100 + y, 80, 255], (y * 48 + x) * 4);
+    const base: PipelineSettings = { width: 12, sampling: "smooth", denoise: false, trim: false, cleanup: 0, outline: null, crop: FULL_CROP, options: { ...DEFAULT_PATTERN_OPTIONS, palette: mard } };
+    const pick: Candidate = { sampling: "smooth", denoise: false, maxColors: 12, dither: { mode: "none", strength: 0 }, cleanup: 0, metric: "standard", minBeads: 0, brightness: 0, contrast: 0, saturation: 30 };
+    const [tuned] = await tuneFromPreferences(imageDataSource(img), base, [{ label: "Vivid pick", candidate: pick, tone: "vivid" }], { count: 1, refine: { method: "pattern", budget: 10 } });
+    expect(tuned!.tone).toBe("vivid");
+  });
 });
