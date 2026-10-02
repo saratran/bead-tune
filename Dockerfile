@@ -12,8 +12,13 @@ COPY server.ts index.html tsconfig.json ./
 COPY src ./src
 
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    DATA_DIR=/app/data
 EXPOSE 3000
+
+# Server-side projects (SQLite) — mounted as a volume so they survive rebuilds.
+RUN mkdir -p /app/data && chown bun:bun /app/data
+VOLUME /app/data
 
 USER bun
 

@@ -4,15 +4,18 @@ import { ColorPicker } from "./components/ColorPicker";
 import { Dropzone } from "./components/Dropzone";
 import { DEFAULT_IMAGE_SETTINGS, ImageOptions, type ImageSettings } from "./components/ImageOptions";
 import { PatternView, type EditTool } from "./components/PatternView";
-import { ProjectsDialog } from "./components/ProjectsDialog";
+import { ProjectsDialog, type OpenProject } from "./components/ProjectsDialog";
 import { CropDialog } from "./components/CropDialog";
+import { AutoDialog } from "./components/AutoDialog";
+import type { Suggestion } from "./lib/auto";
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
 import { applyEdits, type Edits } from "./lib/cleanup";
 import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
 import { applySwaps, type Pattern } from "./lib/pattern";
-import { buildPattern } from "./lib/pipeline";
-import { loadProjectImage, requestPersistentStorage, saveProject, type ProjectMeta, type ProjectState } from "./lib/projects";
+import { buildPattern, type PipelineSettings } from "./lib/pipeline";
+import { requestPersistentStorage, type ProjectLocation, type ProjectMeta, type ProjectState } from "./lib/projects";
+import { storeFor } from "./lib/projectStores";
 import { canvasSource, FULL_CROP, type Crop } from "./lib/sampling";
 import { ExportDialog } from "./components/ExportDialog";
 import { DisplayControls, EditBar, type DisplaySettings } from "./components/PatternControls";
@@ -84,9 +87,18 @@ function loadImage(file: Blob): Promise<HTMLImageElement> {
   });
 }
 
-type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | { kind: "crop" } | null;
+type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "outline" } | { kind: "brush" } | { kind: "crop" } | { kind: "auto" } | null;
 
 const MAX_UNDO = 50;
+
+// Stable ids for decoded images, so cached results can tell images apart.
+const imageIds = new WeakMap<HTMLImageElement, number>();
+let nextImageId = 1;
+function imageId(img: HTMLImageElement): number {
+  let id = imageIds.get(img);
+  if (!id) imageIds.set(img, (id = nextImageId++));
+  return id;
+}
 const THUMB_SIZE = 160;
 
 /** Re-encodes an image as PNG (for images that don't come from a file, like the sample). */
@@ -125,9 +137,11 @@ export function App() {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageBlob, setImageBlob] = useState<Blob | null>(null);
   const [fileName, setFileName] = useState("pattern");
-  const [project, setProject] = useState<{ id: string; name: string } | null>(null);
+  const [project, setProject] = useState<OpenProject | null>(null);
   const [savedJson, setSavedJson] = useState<string | null>(null);
-  const [projectsOpen, setProjectsOpen] = useState(false);
+  // "save" for the normal dialog, "saveAs" to start with a new version name; false when closed.
+  const [projectsOpen, setProjectsOpenState] = useState<false | "save" | "saveAs">(false);
+  const setProjectsOpen = (open: boolean) => setProjectsOpenState(open ? "save" : false);
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -243,20 +257,49 @@ export function App() {
   const dWidth = useDeferredValue(width);
   const dSettings = useDeferredValue(imageSettings);
 
-  const result = useMemo(() => {
-    if (!source) return null;
-    const { sampling, denoise, trim, cleanup, outline, ...options } = dSettings;
-    return buildPattern(source, {
-      width: Math.max(2, Math.min(300, dWidth || 1)),
-      crop,
-      sampling,
-      denoise,
-      trim,
-      cleanup,
-      outline: outline ? outlineColor : null,
-      options: { ...options, palette },
+  const pipelineSettings = useCallback(
+    (settings: ImageSettings, w: number): PipelineSettings => {
+      const { sampling, denoise, trim, cleanup, outline, ...options } = settings;
+      return {
+        width: Math.max(2, Math.min(300, w || 1)),
+        crop,
+        sampling,
+        denoise,
+        trim,
+        cleanup,
+        outline: outline ? outlineColor : null,
+        options: { ...options, palette },
+      };
+    },
+    [crop, outlineColor, palette],
+  );
+
+  const result = useMemo(() => (source ? buildPattern(source, pipelineSettings(dSettings, dWidth)) : null), [source, dSettings, dWidth, pipelineSettings]);
+
+  // Auto suggestions belong to the settings Auto doesn't change; reopening shows them until those change.
+  const [autoResults, setAutoResults] = useState<{ key: string; list: Suggestion[] } | null>(null);
+  const autoKey = useMemo(() => {
+    const { sampling, denoise, cleanup, maxColors, minBeads, metric, dither, ditherStrength, adjustments, ...fixed } = imageSettings;
+    return JSON.stringify({ image: image ? imageId(image) : 0, brandId, width, crop, ownedOnly, excluded: [...excluded], outlineColor: outlineColor.id, fixed });
+  }, [image, brandId, width, crop, ownedOnly, excluded, outlineColor, imageSettings]);
+
+  const applySuggestion = (sg: Suggestion) => {
+    const c = sg.candidate;
+    setImageSettings({
+      ...imageSettings,
+      sampling: c.sampling,
+      denoise: c.denoise,
+      maxColors: c.maxColors,
+      minBeads: c.minBeads,
+      metric: c.metric,
+      dither: c.dither.mode,
+      ditherStrength: c.dither.strength || imageSettings.ditherStrength,
+      cleanup: c.cleanup,
+      adjustments: { brightness: c.brightness, contrast: c.contrast, saturation: c.saturation },
     });
-  }, [source, dWidth, dSettings, palette, outlineColor, crop]);
+    setModal(null);
+    setNotice({ text: `Applied “${sg.label}”` });
+  };
 
   const swapped = useMemo(() => (result ? applySwaps(result.pattern, swaps) : null), [result, swaps]);
 
@@ -415,20 +458,22 @@ export function App() {
     return () => clearTimeout(t);
   }, [notice]);
 
-  const save = async (name: string, asNew = false) => {
+  const save = async (name: string, asNew = false, location: ProjectLocation = project?.location ?? "local") => {
     if (!imageBlob || !pattern) throw new Error("Add an image first.");
-    const saved = await saveProject({
-      id: asNew ? undefined : project?.id,
+    // Only overwrite the open project when saving back to where it came from.
+    const overwrite = !asNew && project?.location === location;
+    const saved = await storeFor(location).save({
+      id: overwrite ? project.id : undefined,
       name,
       image: imageBlob,
       imageName: fileName,
       thumbnail: makeThumbnail(pattern),
       state: projectState,
     });
-    requestPersistentStorage();
-    setProject({ id: saved.id, name: saved.name });
+    if (location === "local") requestPersistentStorage();
+    setProject({ id: saved.id, name: saved.name, location });
     setSavedJson(projectJson);
-    setNotice({ text: `Saved “${saved.name}”` });
+    setNotice({ text: `Saved “${saved.name}”${location === "server" ? " to the server" : ""}` });
   };
 
   const quickSave = () => {
@@ -439,7 +484,8 @@ export function App() {
   /** Returns false if the user chose to keep their unsaved work instead. */
   const openProject = async (meta: ProjectMeta): Promise<boolean> => {
     if (!(await confirmDiscard())) return false;
-    const blob = await loadProjectImage(meta.id);
+    const location = meta.location ?? "local";
+    const blob = await storeFor(location).loadImage(meta.id);
     if (!blob) throw new Error("This project's image is missing.");
     const img = await loadImage(blob);
     const st = meta.state;
@@ -469,7 +515,7 @@ export function App() {
     setTool(null);
     setPickingBg(false);
     setError(null);
-    setProject({ id: meta.id, name: meta.name });
+    setProject({ id: meta.id, name: meta.name, location });
     markSaved.current = true;
     setNotice({ text: `Opened “${meta.name}”` });
     return true;
@@ -573,12 +619,20 @@ export function App() {
           <span className="muted small privacy-note">Your image never leaves your browser</span>
           {project && (
             <span className="project-status small" title={dirty ? "Unsaved changes" : "Saved"}>
+              {project.location === "server" && (
+                <span className="location-badge" title="Saved on the server" aria-label="Stored on the server">
+                  ⛁
+                </span>
+              )}
               {project.name}
               {dirty && <span className="unsaved-dot" aria-label="Unsaved changes" />}
             </span>
           )}
           <button className="theme-btn" disabled={!image} onClick={quickSave}>
             Save
+          </button>
+          <button className="theme-btn" disabled={!image || !project} onClick={() => setProjectsOpenState("saveAs")} title="Save as a new version with a different name">
+            Save as…
           </button>
           <button className="theme-btn" onClick={() => setProjectsOpen(true)}>
             Projects
@@ -704,6 +758,10 @@ export function App() {
             {ownedEmpty && <p className="hint warn">Choose the colours you own to use this option.</p>}
           </div>
 
+          <button className="btn btn-auto full" disabled={!pattern} onClick={() => setModal({ kind: "auto" })}>
+            ✨ Auto suggestions
+          </button>
+
           <ImageOptions
             settings={imageSettings}
             onChange={setImageSettings}
@@ -718,7 +776,14 @@ export function App() {
         <section className="preview-col">
           <div className="card preview">
             <div className="card-head">
-              <h2>Pattern</h2>
+              <h2>
+                Pattern
+                {pattern && pattern.total > 0 && (
+                  <span className="pattern-size" title="Width × height in beads">
+                    {pattern.width} × {pattern.height} beads
+                  </span>
+                )}
+              </h2>
               <div className="actions">
                 <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} canShowOriginal={!!image} />
                 <button className="btn btn-ghost" disabled={!pattern?.total} onClick={enterFullscreen} title="View and edit fullscreen">
@@ -869,6 +934,7 @@ export function App() {
           current={project}
           canSave={!!imageBlob && !!pattern}
           defaultName={fileName}
+          mode={projectsOpen}
           onSave={save}
           onOpen={openProject}
           onCurrentChanged={(p) => {
@@ -926,6 +992,16 @@ export function App() {
             setOwned(next);
             saveOwned(next);
           }}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === "auto" && source && (
+        <AutoDialog
+          source={source}
+          base={pipelineSettings(imageSettings, width)}
+          results={autoResults?.key === autoKey ? autoResults.list : null}
+          onResults={(list) => setAutoResults({ key: autoKey, list })}
+          onApply={applySuggestion}
           onClose={() => setModal(null)}
         />
       )}

@@ -76,11 +76,11 @@ console.log(`${results.length} candidates in ${(ms / 1000).toFixed(1)}s (${(ms /
 const suggestions = suggest(rate(results), Number(flag("count", "8")));
 
 const fmt = (n: number, d = 1) => n.toFixed(d).padStart(6);
-console.log("\n#  label            like ease  colΔE  distΔE edgeErr  noise cols strays frag  settings");
+console.log("\n#  label            like ease  colΔE detΔE  distΔE edgeErr  noise cols strays frag  settings");
 suggestions.forEach((s, i) => {
   const m = s.metrics, c = s.candidate;
   console.log(
-    `${i + 1}  ${s.label.padEnd(15)} ${String(s.likeness).padStart(4)} ${String(s.ease).padStart(4)} ${fmt(m.colorError)} ${fmt(m.distanceError)} ${fmt(m.edgeError, 3)} ${fmt(m.noise, 2)} ${String(m.colors).padStart(4)} ${String(m.strays).padStart(6)} ${fmt(m.fragmentation)}  ` +
+    `${i + 1}  ${s.label.padEnd(15)} ${String(s.likeness).padStart(4)} ${String(s.ease).padStart(4)} ${fmt(m.colorError)} ${fmt(m.detailError)} ${fmt(m.distanceError)} ${fmt(m.edgeError, 3)} ${fmt(m.noise, 2)} ${String(m.colors).padStart(4)} ${String(m.strays).padStart(6)} ${fmt(m.fragmentation)}  ` +
       `${c.sampling}${c.denoise ? "+denoise" : ""} ${c.maxColors}c ${c.dither.mode}${c.dither.mode !== "none" ? c.dither.strength : ""} clean${c.cleanup} b${c.brightness} c${c.contrast} s${c.saturation} ${c.metric}`,
   );
 });

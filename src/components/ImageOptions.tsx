@@ -101,14 +101,12 @@ function Section({ title, children, open = false }: { title: string; children: R
   );
 }
 
-const ADJUST_STEP = 5;
-
 function Slider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
   const id = `adjust-${label.toLowerCase()}`;
   return (
     <div className="slider">
       <label htmlFor={id}>{label}</label>
-      <RangeInput id={id} label={label} value={value} min={-100} max={100} step={ADJUST_STEP} onChange={onChange} />
+      <RangeInput id={id} label={label} value={value} min={-100} max={100} onChange={onChange} />
       <output htmlFor={id}>{value > 0 ? `+${value}` : value}</output>
     </div>
   );
@@ -190,7 +188,7 @@ export function ImageOptions({ settings: s, onChange, result, outlineColor, onCh
       </Section>
 
       <Section title="Colours" open>
-        <Range id="colors" label="Colours" value={s.maxColors} min={2} max={60} onChange={(v) => set("maxColors", v)} format={(v) => `up to ${v}`} />
+        <Range id="colors" label="Colours" value={s.maxColors} min={2} max={120} onChange={(v) => set("maxColors", v)} format={(v) => `up to ${v}`} />
         <Range
           id="min-beads"
           label="Min beads per colour"

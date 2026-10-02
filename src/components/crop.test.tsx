@@ -141,26 +141,26 @@ describe("crop and original in the app", () => {
 
   test("cropping changes the pattern and shows a status with a remove link", async () => {
     await loadSample();
-    expect(screen.getByText(/52 × 52 beads/)).toBeTruthy();
+    expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 52 beads");
     await cropToLeftHalf();
     // Left half of a square image is twice as tall as wide.
-    await waitFor(() => expect(screen.getByText(/52 × 104 beads/)).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 104 beads"));
     expect(document.querySelector(".crop-status")!.textContent).toContain("Cropped to");
     fireEvent.click(screen.getByText("Remove crop"));
-    await waitFor(() => expect(screen.getByText(/52 × 52 beads/)).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 52 beads"));
     expect(document.querySelector(".crop-status") === null).toBe(true);
   });
 
   test("the crop can be changed again later", async () => {
     await loadSample();
     await cropToLeftHalf();
-    await waitFor(() => expect(screen.getByText(/52 × 104 beads/)).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 104 beads"));
     fireEvent.click(screen.getByText("✂ Crop"));
     // The editor opens on the current crop.
     expect(screen.getByTestId("crop-box").style.width).toBe("50%");
     fireEvent.click(screen.getByText("Reset"));
     fireEvent.click(screen.getByText("Apply crop"));
-    await waitFor(() => expect(screen.getByText(/52 × 52 beads/)).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 52 beads"));
   });
 
   test("Original toggle shows the panel beside the pattern and is remembered", async () => {
@@ -190,7 +190,7 @@ describe("crop and original in the app", () => {
   test("the crop is saved with a project and a new image resets it", async () => {
     await loadSample();
     await cropToLeftHalf();
-    await waitFor(() => expect(screen.getByText(/52 × 104 beads/)).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 104 beads"));
     fireEvent.click(screen.getByText("Projects"));
     const d = screen.getByRole("dialog", { name: "Projects" });
     fireEvent.change(within(d).getByLabelText("Save this pattern"), { target: { value: "Half" } });
@@ -201,7 +201,7 @@ describe("crop and original in the app", () => {
 
     const bytes = Uint8Array.from(atob(PNG_DATA_URL.split(",")[1]!), (c) => c.charCodeAt(0));
     fireEvent.change(document.querySelector("input[type=file]")!, { target: { files: [new File([bytes], "dog.png", { type: "image/png" })] } });
-    await waitFor(() => expect(screen.getByText(/52 × 52 beads/)).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 52 beads"));
     expect(document.querySelector(".crop-status") === null).toBe(true);
   });
 });

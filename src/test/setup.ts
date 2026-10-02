@@ -11,8 +11,13 @@ const { installCanvasMock, mockPixels } = await import("./canvas-mock");
 
 installCanvasMock();
 
+// No real network in tests: anything that needs a server installs its own fetch.
+const noNetwork = () => Promise.reject(new TypeError("No network in tests"));
+globalThis.fetch = noNetwork as unknown as typeof fetch;
+
 afterEach(() => {
   cleanup();
+  globalThis.fetch = noNetwork as unknown as typeof fetch;
   mockPixels(null);
   localStorage.clear();
   // Fresh, empty IndexedDB for every test.

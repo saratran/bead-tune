@@ -118,15 +118,15 @@ describe("image option sliders have steppers", () => {
     }
   });
 
-  test("adjustments step by 5, other options by 1", () => {
+  test("every slider steps by 1", () => {
     render(<Options />);
     tap(screen.getByLabelText("Increase Brightness"));
     tap(screen.getByLabelText("Decrease Contrast"));
     tap(screen.getByLabelText("Increase Colours"));
     tap(screen.getByLabelText("Decrease Tolerance"));
-    expect(state().adjustments).toMatchObject({ brightness: 5, contrast: -5 });
+    expect(state().adjustments).toMatchObject({ brightness: 1, contrast: -1 });
     expect(state()).toMatchObject({ maxColors: 25, bgTolerance: 13 });
-    expect(screen.getByText("+5")).toBeTruthy();
+    expect(screen.getByText("+1")).toBeTruthy();
   });
 
   test("the adjustment sliders are labelled for assistive tech", () => {

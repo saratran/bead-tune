@@ -37,18 +37,36 @@ git pull && docker compose up -d --build   # update
 - Clean-up: remove stray beads/small groups, one-bead outline in any colour
 - Brightness / contrast / saturation
 - Hand editing: paint, erase and pick colours bead by bead, with undo
+- ✨ Auto suggestions: tries combinations of sampling, colour limit (up to 120), dithering,
+  clean-up, matching and brightness/contrast/saturation; scores likeness to the original
+  (colour, fine detail, viewing distance, edges, speckle) and ease (fewer colours, fewer stray
+  beads); shows a varied list (most faithful, balanced, simplest, smooth shading, crisp…).
+  Configurable search space with built-in and saved presets
 - Fullscreen viewer/editor: fit-to-screen, zoom (buttons, +/−/0, Ctrl/⌘+wheel, pinch), drag to
   pan, all display and edit tools, Esc to exit, Ctrl/⌘+Z to undo
 - Works on phones: fits narrow screens, touch-sized controls, drag-to-paint on touch
 - Projects: save the image and every setting (including colour swaps and hand edits) under a
   name, then reopen, rename, copy or delete them from a list. Stored in this browser's
-  IndexedDB only; Ctrl/⌘+S saves. Asks before discarding unsaved changes (new image, opening
-  another project, leaving the page)
+  IndexedDB, or on the server (SQLite, shared by every device on the network). "Save as…"
+  saves a new version ("Name v2"); projects can be copied between device and server.
+  Ctrl/⌘+S saves. Asks before discarding unsaved changes (new image, opening another
+  project, leaving the page)
 - Bead shopping list; click a bead or colour to highlight, swap or remove colours
 - Display as squares (default), beads, crosses or dots, with optional colour codes
 - Export dialog with live preview: PNG or PDF, size L/M/S, cell shape, grid, analysis
   diagram (coordinates + guide lines every 5/10), count summary, title, watermark, shadow,
   colour codes, and (PDF) one page per pegboard
+
+## Server storage
+
+`server.ts` serves the app and a small projects API (`src/server/projectsApi.ts`) backed by
+SQLite in `$DATA_DIR` (default `./data`; `/app/data` in Docker, on the `bead-data` volume).
+There is no authentication — it's meant for a home network.
+
+## Tuning Auto mode
+
+`bun scripts/tune-auto.ts <image> [--width 52] [--wide] [--accurate]` (macOS) prints each
+suggestion's metrics and writes a contact sheet PNG.
 
 ## Tests
 

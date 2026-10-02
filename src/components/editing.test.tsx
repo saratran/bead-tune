@@ -178,7 +178,7 @@ describe("App with an image", () => {
   test("builds a pattern from the image", async () => {
     await loadSample();
     expect(pill()).toBe("2,704 beads · 2 colours");
-    expect(screen.getByText(/52 × 52 beads/)).toBeTruthy();
+    expect(document.querySelector(".pattern-size")?.textContent).toBe("52 × 52 beads");
   });
 
   test("background removal and trim shrink the pattern to the subject", async () => {
@@ -186,7 +186,7 @@ describe("App with an image", () => {
     fireEvent.click(screen.getByLabelText("Remove background"));
     await waitFor(() => expect(pill()).toBe("676 beads · 1 colour"));
     fireEvent.click(screen.getByLabelText("Trim empty space"));
-    await waitFor(() => expect(screen.getByText(/^\d+ × \d+ beads/).textContent).toMatch(/^5[0-2] × 5[0-2] beads/));
+    await waitFor(() => expect(document.querySelector(".pattern-size")?.textContent).toMatch(/^5[0-2] × 5[0-2] beads/));
   });
 
   test("outline adds a ring of the darkest colour", async () => {

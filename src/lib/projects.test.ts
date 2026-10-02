@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_IMAGE_SETTINGS } from "../components/ImageOptions";
-import { deleteProject, listProjects, loadProjectImage, renameProject, saveProject, type ProjectState } from "./projects";
+import { deleteProject, listProjects, loadProjectImage, nextVersionName, renameProject, saveProject, type ProjectState } from "./projects";
 
 const state: ProjectState = {
   version: 1,
@@ -79,5 +79,20 @@ describe("projects storage", () => {
     await deleteProject(a.id);
     expect((await listProjects()).map((p) => p.id)).toEqual([b.id]);
     expect(await loadProjectImage(a.id)).toBeUndefined();
+  });
+});
+
+describe("nextVersionName", () => {
+  test("adds or bumps a version number", () => {
+    expect(nextVersionName("Berry", [])).toBe("Berry v2");
+    expect(nextVersionName("Berry v2", ["Berry", "Berry v2"])).toBe("Berry v3");
+  });
+
+  test("skips versions that already exist", () => {
+    expect(nextVersionName("Berry", ["Berry", "Berry v2", "Berry v5", "Other v9"])).toBe("Berry v6");
+  });
+
+  test("blank names", () => {
+    expect(nextVersionName("  ", [])).toBe("Untitled v2");
   });
 });

@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
 import { listProjects, loadProjectImage } from "../lib/projects";
 import { mockPixels, PNG_DATA_URL } from "../test/canvas-mock";
+import { useInMemoryServer } from "../test/server-fetch";
 
 const redSquare = (w: number, h: number) => {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -146,11 +147,11 @@ describe("projects in the app", () => {
     expect(screen.queryByTitle("Unsaved changes") === null).toBe(true);
   });
 
-  test("save as copy keeps the original", async () => {
+  test("save as new version keeps the original", async () => {
     await loadSample();
     await saveAs("Berry");
     fireEvent.change(within(dialog()).getByLabelText("Current project"), { target: { value: "Berry 2" } });
-    fireEvent.click(within(dialog()).getByRole("button", { name: "Save as copy" }));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save as new version" }));
     await waitFor(() => expect(within(dialog()).getByText("Berry 2")).toBeTruthy());
     expect((await listProjects()).map((p) => p.name).sort()).toEqual(["Berry", "Berry 2"]);
     expect(screen.getByTitle("Saved").textContent).toBe("Berry 2");
@@ -236,5 +237,80 @@ describe("saving robustness", () => {
     } finally {
       globalThis.indexedDB = saved;
     }
+  });
+});
+
+describe("server projects and versions", () => {
+  let api: ReturnType<typeof useInMemoryServer> | null = null;
+  afterEach(() => {
+    api?.close();
+    api = null;
+  });
+
+  const target = (name: "This device" | "Server") => within(dialog()).getByRole("radio", { name });
+
+  test("without a server, only This device is offered", async () => {
+    await loadSample();
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    await waitFor(() => expect((target("Server") as HTMLButtonElement).disabled).toBe(true));
+    expect(within(dialog()).getByText("Server storage isn't available here.")).toBeTruthy();
+    expect(target("This device").getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("save to the server, then reopen it from the list", async () => {
+    api = useInMemoryServer();
+    await loadSample();
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    await waitFor(() => expect((target("Server") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(target("Server"));
+    fireEvent.change(within(dialog()).getByLabelText("Save this pattern"), { target: { value: "Shared berry" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast()).toBe("Saved “Shared berry” to the server"));
+    const onServer = within(dialog()).getByRole("region", { name: "On the server" });
+    await waitFor(() => expect(within(onServer).getByText("Shared berry")).toBeTruthy());
+    expect(await listProjects()).toEqual([]); // nothing on this device
+    expect(screen.getByLabelText("Stored on the server")).toBeTruthy(); // topbar badge
+
+    // Change something and quick-save: goes back to the server copy.
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    fireEvent.click(screen.getByText("78"));
+    fireEvent.click(screen.getAllByText("Save")[0]!);
+    await waitFor(() => expect(toast()).toBe("Saved “Shared berry” to the server"));
+    const server = await (await fetch("/api/projects")).json();
+    expect(server).toHaveLength(1);
+    expect(server[0].state.width).toBe(78);
+  });
+
+  test("Save as… suggests the next version and keeps the original", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    fireEvent.click(screen.getByText("Save as…"));
+    expect(within(dialog()).getByRole("heading", { name: "Save as new version" })).toBeTruthy();
+    await waitFor(() => expect((within(dialog()).getByLabelText("New version name") as HTMLInputElement).value).toBe("Berry v2"));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save as new version" }));
+    await waitFor(() => expect(toast()).toBe("Saved “Berry v2”"));
+    expect((await listProjects()).map((p) => p.name).sort()).toEqual(["Berry", "Berry v2"]);
+    expect(screen.getByTitle("Saved").textContent).toBe("Berry v2");
+  });
+
+  test("Save as… is only offered once a project is open", async () => {
+    await loadSample();
+    expect((screen.getByText("Save as…") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("copy a project from this device to the server and back", async () => {
+    api = useInMemoryServer();
+    await loadSample();
+    await saveAs("Berry");
+    const onDevice = within(dialog()).getByRole("region", { name: "On this device" });
+    fireEvent.click(await within(onDevice).findByRole("button", { name: "Copy to server" }));
+    const onServer = () => within(dialog()).getByRole("region", { name: "On the server" });
+    await waitFor(() => expect(within(onServer()).getByText("Berry")).toBeTruthy());
+    const server = await (await fetch("/api/projects")).json();
+    expect(server[0].name).toBe("Berry");
+
+    fireEvent.click(within(onServer()).getByRole("button", { name: "Copy to device" }));
+    await waitFor(async () => expect(await listProjects()).toHaveLength(2));
   });
 });

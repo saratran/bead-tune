@@ -8,6 +8,13 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
+      DATA_DIR: /app/data
+    volumes:
+      # Projects saved "on the server" — kept across rebuilds and updates.
+      - bead-data:/app/data
     # Starts again after crashes and reboots (Docker itself starts at boot),
     # unless it was stopped on purpose with `docker compose stop`.
     restart: unless-stopped
+
+volumes:
+  bead-data:

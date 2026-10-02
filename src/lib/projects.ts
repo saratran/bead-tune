@@ -27,8 +27,12 @@ export interface ProjectState {
   edits: { w: number; h: number; cells: [index: number, colorId: string | null][] };
 }
 
+export type ProjectLocation = "local" | "server";
+
 export interface ProjectMeta {
   id: string;
+  /** Where it's stored; set by the store that listed or saved it. */
+  location?: ProjectLocation;
   name: string;
   createdAt: number;
   updatedAt: number;
@@ -86,7 +90,7 @@ async function withStores<T>(mode: IDBTransactionMode, fn: (meta: IDBObjectStore
   }
 }
 
-function newId(): string {
+export function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -148,6 +152,22 @@ export async function deleteProject(id: string): Promise<void> {
     meta.delete(id);
     images.delete(id);
   });
+}
+
+/**
+ * Suggests the next version name: "Berry" → "Berry v2", "Berry v2" → "Berry v3",
+ * skipping versions that already exist.
+ */
+export function nextVersionName(name: string, existing: string[]): string {
+  const base = name.replace(/\s+v\d+$/i, "").trim() || "Untitled";
+  let max = 1;
+  for (const n of existing) {
+    const m = /^(.*?)\s+v(\d+)$/i.exec(n.trim());
+    if (m && m[1]!.trim() === base) max = Math.max(max, Number(m[2]));
+  }
+  const own = /\s+v(\d+)$/i.exec(name);
+  if (own) max = Math.max(max, Number(own[1]));
+  return `${base} v${max + 1}`;
 }
 
 /** Ask the browser not to evict saved projects under storage pressure (best effort). */

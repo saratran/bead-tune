@@ -45,3 +45,6 @@ Thumbs.db
 
 # Local reference screenshots (third-party images; not for the repo)
 references/
+
+# Server-side project storage (local dev)
+data/

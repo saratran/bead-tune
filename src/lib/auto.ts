@@ -103,7 +103,8 @@ export function enumerateCandidates(space: SearchSpace, limit = Infinity): Candi
   };
   if (total <= limit) return Array.from({ length: total }, (_, i) => at(i));
   const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
-  let stride = Math.max(1, Math.round(total / limit * 0.618 * limit) % total) | 1;
+  // Golden-ratio stride spreads picks evenly through the combinations.
+  let stride = Math.max(1, Math.round(total * 0.618) % total) | 1;
   while (gcd(stride, total) !== 1) stride++;
   return Array.from({ length: limit }, (_, i) => at((i * stride) % total));
 }
@@ -131,6 +132,8 @@ export function candidateSettings(base: PipelineSettings, c: Candidate): Pipelin
 export interface Metrics {
   /** Mean ΔE2000 between each bead and the original at that spot. */
   colorError: number;
+  /** Mean ΔE2000 where the original has the most detail (eyes, outlines, highlights). */
+  detailError: number;
   /** Mean ΔE after blurring both — how it looks from a distance (credits dithering). */
   distanceError: number;
   /** 1 − correlation of edge strength: are outlines/features where the original has them? */
@@ -240,6 +243,9 @@ function correlation(a: Float32Array, b: Float32Array): number {
  * Scores `pattern` against `reference` (the unadjusted original, smooth-sampled
  * on the pattern's grid). Pattern cell (x, y) ↔ reference cell (x − offsetX, y − offsetY).
  */
+/** Share of cells (most detailed first) used for detailError. */
+const DETAIL_SHARE = 0.15;
+
 export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0, offsetY = 0): Metrics {
   const { width: w, height: h } = pattern;
   const ref: Grid = { w, h, lab: new Float32Array(w * h * 3).fill(NaN) };
@@ -247,6 +253,7 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
   const refFull = labGridFromImage(reference);
   let colorSum = 0;
   let compared = 0;
+  const cellError = new Float32Array(w * h).fill(NaN);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
@@ -256,7 +263,9 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
       if (inRef) ref.lab.set(refFull.lab.subarray((ry * refFull.w + rx) * 3, (ry * refFull.w + rx) * 3 + 3), i * 3);
       if (idx >= 0) pat.lab.set(pattern.colors[idx]!.lab, i * 3);
       if (idx >= 0 && inRef) {
-        colorSum += deltaE2000(pattern.colors[idx]!.lab, [ref.lab[i * 3]!, ref.lab[i * 3 + 1]!, ref.lab[i * 3 + 2]!] as Lab);
+        const e = deltaE2000(pattern.colors[idx]!.lab, [ref.lab[i * 3]!, ref.lab[i * 3 + 1]!, ref.lab[i * 3 + 2]!] as Lab);
+        cellError[i] = e;
+        colorSum += e;
         compared++;
       }
     }
@@ -272,6 +281,17 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
 
   // Edges on lightly blurred images: features count, single-bead dither speckle much less.
   const edgeError = 1 - correlation(edges(bp), edges(br));
+
+  // Detail: the cells where the original differs most from its surroundings
+  // (top DETAIL_SHARE). Small features like eyes barely move the overall mean.
+  const saliency: { i: number; v: number }[] = [];
+  for (let i = 0; i < w * h; i++) {
+    if (Number.isNaN(cellError[i]!) || Number.isNaN(br.lab[i * 3]!)) continue;
+    saliency.push({ i, v: labDistSq([ref.lab[i * 3]!, ref.lab[i * 3 + 1]!, ref.lab[i * 3 + 2]!], [br.lab[i * 3]!, br.lab[i * 3 + 1]!, br.lab[i * 3 + 2]!]) });
+  }
+  saliency.sort((a, b) => b.v - a.v);
+  const detailCells = saliency.slice(0, Math.max(1, Math.round(saliency.length * DETAIL_SHARE)));
+  const detailError = saliency.length ? detailCells.reduce((sum, c) => sum + cellError[c.i]!, 0) / detailCells.length : 0;
 
   // Speckle: how far each bead is from its blurred neighbourhood, beyond what the
   // original has at the same spot. Dithering a flat background scores badly here;
@@ -312,6 +332,7 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
 
   return {
     colorError: compared ? colorSum / compared : 0,
+    detailError,
     distanceError: distN ? distSum / distN : 0,
     edgeError,
     noise: noiseN ? noiseSum / noiseN : 0,
@@ -326,7 +347,7 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
 
 /** Relative weights; tuned on real images (see scripts/tune-auto.ts). */
 export const WEIGHTS = {
-  likeness: { color: 0.3, distance: 0.25, edge: 0.2, noise: 0.25 },
+  likeness: { color: 0.25, detail: 0.25, distance: 0.2, edge: 0.1, noise: 0.2 },
   effort: { colors: 0.45, strays: 0.35, fragmentation: 0.2 },
 };
 
@@ -338,6 +359,8 @@ export interface Scored {
   likeness: number;
   /** 0–100 within this scan: how easy to make (few colours, few strays, big areas). */
   ease: number;
+  /** 0..1 within this scan: how many colours, on a log scale (0 = fewest). */
+  colorLoad: number;
 }
 
 export interface Suggestion extends Scored {
@@ -355,6 +378,7 @@ export function rate(results: { candidate: Candidate; pattern: Pattern; metrics:
   const m = results.map((r) => r.metrics);
   const n = {
     color: normaliser(m.map((x) => x.colorError)),
+    detail: normaliser(m.map((x) => x.detailError)),
     distance: normaliser(m.map((x) => x.distanceError)),
     edge: normaliser(m.map((x) => x.edgeError)),
     noise: normaliser(m.map((x) => x.noise)),
@@ -366,9 +390,14 @@ export function rate(results: { candidate: Candidate; pattern: Pattern; metrics:
   const L = WEIGHTS.likeness, E = WEIGHTS.effort;
   return results.map((r) => {
     const x = r.metrics;
-    const bad = L.color * n.color(x.colorError) + L.distance * n.distance(x.distanceError) + L.edge * n.edge(x.edgeError) + L.noise * n.noise(x.noise);
+    const bad = L.color * n.color(x.colorError) + L.detail * n.detail(x.detailError) + L.distance * n.distance(x.distanceError) + L.edge * n.edge(x.edgeError) + L.noise * n.noise(x.noise);
     const effort = E.colors * n.colors(Math.log(x.colors)) + E.strays * n.strays(x.strays / Math.max(1, x.beads)) + E.fragmentation * n.fragmentation(x.fragmentation);
-    return { ...r, likeness: Math.round((1 - bad) * 100), ease: Math.round((1 - effort) * 100) };
+    return {
+      ...r,
+      likeness: Math.round((1 - bad) * 100),
+      ease: Math.round((1 - effort) * 100),
+      colorLoad: n.colors(Math.log(x.colors)),
+    };
   });
 }
 
@@ -413,6 +442,10 @@ export function knee(scored: Scored[]): Scored | undefined {
 
 /** Below this share of differing beads, two suggestions count as duplicates. */
 export const MIN_DIFFERENCE = 0.06;
+/** Likeness points a pick gives up for using the most colours in the scan. */
+export const COLOR_PENALTY = 6;
+/** "Balanced" = fewest colours among candidates within this many likeness points of the best. */
+export const BALANCED_WITHIN = 6;
 
 /**
  * Picks up to `count` varied suggestions: named picks first (most faithful,
@@ -430,11 +463,14 @@ export function suggest(scored: Scored[], count: number): Suggestion[] {
   // Ignore near-useless candidates for "simplest".
   const decent = scored.filter((s) => s.likeness >= 50);
 
-  add(best(scored, (s) => s.likeness + s.ease * 0.05), "Most faithful", "Closest to the original");
-  add(knee(scored), "Balanced", "Where more simplicity starts costing a lot of likeness");
+  // Every pick prefers fewer colours when the look is about the same.
+  add(best(scored, (s) => s.likeness - COLOR_PENALTY * s.colorLoad), "Most faithful", "Closest to the original");
+  const top = Math.max(...scored.map((s) => s.likeness));
+  const close = scored.filter((s) => s.likeness >= top - BALANCED_WITHIN);
+  add(best(close, (s) => -s.colorLoad * 100 + s.likeness * 0.1 + s.ease * 0.05), "Balanced", "Nearly as faithful, with fewer colours");
   add(best(decent.length ? decent : scored, (s) => s.ease + s.likeness * 0.25), "Simplest", "Fewest colours and stray beads");
-  add(best(scored.filter((s) => s.candidate.dither.mode !== "none"), (s) => s.likeness + s.ease * 0.1), "Smooth shading", "Dithering blends colours across gradients");
-  add(best(scored.filter((s) => s.candidate.sampling === "sharp" && s.candidate.dither.mode === "none"), (s) => s.likeness + s.ease * 0.2), "Crisp", "Clean edges, no blending");
+  add(best(scored.filter((s) => s.candidate.dither.mode !== "none"), (s) => s.likeness - COLOR_PENALTY * s.colorLoad), "Smooth shading", "Dithering blends colours across gradients");
+  add(best(scored.filter((s) => s.candidate.sampling === "sharp" && s.candidate.dither.mode === "none"), (s) => s.likeness - COLOR_PENALTY * s.colorLoad), "Crisp", "Clean edges, no blending");
 
   // Fill up with the best remaining trade-offs (Pareto front first).
   const front = new Set(paretoFront(scored));
@@ -444,6 +480,23 @@ export function suggest(scored: Scored[], count: number): Suggestion[] {
 }
 
 // ---------------------------------------------------------------- running a scan
+
+/**
+ * Lets the page repaint and handle input between chunks. A MessageChannel
+ * message, unlike setTimeout, isn't throttled to ~1/s when the tab is in the
+ * background, so a scan keeps going at full speed if you switch tabs.
+ */
+function yieldToBrowser(): Promise<void> {
+  if (typeof MessageChannel === "undefined") return new Promise((r) => setTimeout(r, 0));
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
 
 export interface ScanProgress {
   done: number;
@@ -480,7 +533,7 @@ export async function scan(
     }
     if (performance.now() - sliceStart > sliceMs) {
       onProgress?.({ done: i + 1, total: candidates.length });
-      await new Promise((r) => setTimeout(r, 0));
+      await yieldToBrowser();
       sliceStart = performance.now();
     }
   }
