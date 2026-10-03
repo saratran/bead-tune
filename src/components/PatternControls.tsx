@@ -1,3 +1,4 @@
+import { BRUSH_SIZES, type BrushSize } from "../lib/editing";
 import { colorLabel, type BeadColor } from "../lib/palettes";
 import type { CellShape } from "../lib/render";
 import type { EditTool } from "./PatternView";
@@ -35,16 +36,31 @@ export function DisplayControls({
   );
 }
 
-const TOOL_LABELS: Record<EditTool, string> = { paint: "Paint", erase: "Erase", pick: "Pick colour" };
+const TOOL_LABELS: Record<EditTool, string> = { paint: "Paint", erase: "Erase", fill: "Fill", replace: "Replace", pick: "Pick colour" };
 
-/** Paint / erase / pick, brush colour, undo and clear. */
+/** Keyboard shortcut for each tool (shown on hover; handled in the app). */
+export const TOOL_KEYS: Record<EditTool, string> = { paint: "B", erase: "E", fill: "G", replace: "R", pick: "I" };
+
+const TOOL_HINTS: Record<EditTool, string> = {
+  paint: "Paint beads with the brush colour",
+  erase: "Remove beads",
+  fill: "Fill a connected area of one colour",
+  replace: "Replace every bead of a colour",
+  pick: "Pick a colour from the pattern (or Alt-click with any tool)",
+};
+
+/** Paint / erase / fill / replace / pick, brush colour and size, undo/redo and clear. */
 export function EditBar({
   tool,
   onTool,
   brush,
   onChooseBrush,
+  brushSize = 1,
+  onBrushSize,
   canUndo,
   onUndo,
+  canRedo = false,
+  onRedo,
   canClear,
   onClear,
   outline,
@@ -53,8 +69,12 @@ export function EditBar({
   onTool: (t: EditTool) => void;
   brush: BeadColor | null;
   onChooseBrush: () => void;
+  brushSize?: number;
+  onBrushSize?: (size: BrushSize) => void;
   canUndo: boolean;
   onUndo: () => void;
+  canRedo?: boolean;
+  onRedo?: () => void;
   canClear: boolean;
   onClear: () => void;
   /**
@@ -66,8 +86,8 @@ export function EditBar({
   return (
     <div className="edit-bar">
       <div className="segmented" role="radiogroup" aria-label="Edit tool">
-        {(["paint", "erase", "pick"] as const).map((t) => (
-          <button key={t} role="radio" aria-checked={tool === t} className={tool === t ? "on" : ""} onClick={() => onTool(t)}>
+        {(["paint", "erase", "fill", "replace", "pick"] as const).map((t) => (
+          <button key={t} role="radio" aria-checked={tool === t} className={tool === t ? "on" : ""} onClick={() => onTool(t)} title={`${TOOL_HINTS[t]} (${TOOL_KEYS[t]})`}>
             {TOOL_LABELS[t]}
           </button>
         ))}
@@ -76,9 +96,23 @@ export function EditBar({
         <span className="dot big" style={{ background: brush?.hex }} />
         {brush ? colorLabel(brush) : "Colour"}
       </button>
-      <button className="btn btn-ghost" disabled={!canUndo} onClick={onUndo}>
+      {onBrushSize && (tool === "paint" || tool === "erase") && (
+        <div className="segmented brush-size" role="radiogroup" aria-label="Brush size" title="Brush size ([ and ] to change)">
+          {BRUSH_SIZES.map((n) => (
+            <button key={n} role="radio" aria-checked={brushSize === n} className={brushSize === n ? "on" : ""} onClick={() => onBrushSize(n)}>
+              {n}
+            </button>
+          ))}
+        </div>
+      )}
+      <button className="btn btn-ghost" disabled={!canUndo} onClick={onUndo} title="Undo (⌘/Ctrl+Z)">
         Undo
       </button>
+      {onRedo && (
+        <button className="btn btn-ghost" disabled={!canRedo} onClick={onRedo} title="Redo (⌘/Ctrl+Shift+Z)">
+          Redo
+        </button>
+      )}
       <button className="btn btn-ghost" disabled={!canClear} onClick={onClear}>
         Clear edits
       </button>
@@ -96,6 +130,12 @@ export function EditBar({
           </span>
         </span>
       )}
+      <details className="shortcuts">
+        <summary>Shortcuts</summary>
+        <p className="hint">
+          B paint · E erase · G fill · R replace · I pick · [ ] brush size · Shift-click line · Alt-click pick · ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z redo · Esc done
+        </p>
+      </details>
     </div>
   );
 }

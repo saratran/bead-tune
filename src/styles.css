@@ -2383,3 +2383,32 @@ button.zoom-level:hover:not(:disabled) {
   font-size: 11px;
   font-weight: 700;
 }
+
+/* Bead editor: the canvas plus an outline of what the brush will change. */
+.canvas-wrap {
+  position: relative;
+  flex: none;
+}
+
+.brush-preview {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
+
+.edit-bar .brush-size button {
+  min-width: 30px;
+}
+
+.edit-bar .shortcuts > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.edit-bar .shortcuts[open] {
+  flex-basis: 100%;
+}

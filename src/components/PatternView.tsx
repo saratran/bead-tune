@@ -14,7 +14,10 @@ interface Props {
   codes: boolean;
   /** Active edit tool; when set, pressing and dragging edits beads instead of highlighting. */
   tool?: EditTool | null;
-  onEdit?: (index: number, phase: "start" | "move") => void;
+  /** `mods`: Shift draws a straight line from the last bead; Alt picks a colour instead. */
+  onEdit?: (index: number, phase: "start" | "move", mods?: { shift: boolean; alt: boolean }) => void;
+  /** Paint/erase brush size in beads (for the outline under the cursor). */
+  brushSize?: number;
   /**
    * Fullscreen viewer: fits the whole pattern, then `zoom` scales it (1 = fit).
    * Drag pans, pinch / Ctrl+wheel call `onZoom` with a scale factor.
@@ -26,7 +29,10 @@ interface Props {
   onZoom?: (factor: number) => void;
 }
 
-export type EditTool = "paint" | "erase" | "pick";
+export type EditTool = "paint" | "erase" | "fill" | "replace" | "pick";
+
+/** Tools that paint as you drag (the others act on a single click). */
+const DRAG_TOOLS: EditTool[] = ["paint", "erase"];
 
 const INLINE_MAX_CELL = 26;
 const FULLSCREEN_MAX_CELL = 120;
@@ -52,6 +58,7 @@ export function PatternView({
   codes,
   tool,
   onEdit,
+  brushSize = 1,
   fullscreen: fullscreenProp = false,
   fit = false,
   zoom = 1,
@@ -172,6 +179,7 @@ export function PatternView({
           }
         }}
       >
+        <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
           className={`pattern-canvas ${tool ? `editing tool-${tool}` : ""} ${fullscreen && !tool ? "pannable" : ""}`}
@@ -192,7 +200,8 @@ export function PatternView({
               e.preventDefault();
               e.currentTarget.setPointerCapture?.(e.pointerId);
               stroke.current = c.y * pattern.width + c.x;
-              onEdit(stroke.current, "start");
+              onEdit(stroke.current, "start", { shift: e.shiftKey, alt: e.altKey });
+              if (e.altKey || !DRAG_TOOLS.includes(tool)) stroke.current = null;
               return;
             }
             if (fullscreen && wrapRef.current) {
@@ -216,7 +225,7 @@ export function PatternView({
               wrapRef.current.scrollTop = pan.current.top - dy;
               return;
             }
-            if (stroke.current === null || !onEdit || tool === "pick") return;
+            if (stroke.current === null || !onEdit || !tool || !DRAG_TOOLS.includes(tool)) return;
             const c = cellAt(e);
             if (!c) return;
             const index = c.y * pattern.width + c.x;
@@ -239,6 +248,16 @@ export function PatternView({
             onPickColor(id === highlightId ? null : id);
           }}
         />
+        {tool && hover && (() => {
+          // Outline of the beads the next click will change.
+          const size = DRAG_TOOLS.includes(tool) ? brushSize : 1;
+          const x0 = Math.max(0, hover.x - Math.floor((size - 1) / 2));
+          const y0 = Math.max(0, hover.y - Math.floor((size - 1) / 2));
+          const x1 = Math.min(pattern.width, hover.x - Math.floor((size - 1) / 2) + size);
+          const y1 = Math.min(pattern.height, hover.y - Math.floor((size - 1) / 2) + size);
+          return <div className="brush-preview" style={{ left: x0 * cell, top: y0 * cell, width: (x1 - x0) * cell, height: (y1 - y0) * cell }} />;
+        })()}
+        </div>
       </div>
       <div className="pattern-status">
         {hover ? (
@@ -255,7 +274,13 @@ export function PatternView({
             )}
           </>
         ) : tool ? (
-          { paint: "Click or drag to paint beads.", erase: "Click or drag to remove beads.", pick: "Click a bead to use its colour." }[tool]
+          {
+            paint: "Click or drag to paint · Shift-click draws a line · Alt-click picks a colour.",
+            erase: "Click or drag to remove beads · Shift-click erases a line.",
+            fill: "Click to fill a connected area of one colour.",
+            replace: "Click a colour to replace every bead of it.",
+            pick: "Click a bead to use its colour.",
+          }[tool]
         ) : fullscreen ? (
           "Drag to move around · pinch or Ctrl+scroll to zoom · tap a bead to highlight its colour."
         ) : (

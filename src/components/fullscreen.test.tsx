@@ -83,7 +83,7 @@ describe("PatternView fullscreen", () => {
     expect(onZoom.mock.lastCall![0]).toBeCloseTo(2);
     // Painting stopped when the second finger landed.
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 160, clientY: 10 });
-    expect(onEdit.mock.calls).toEqual([[0, "start"]]);
+    expect(onEdit.mock.calls).toEqual([[0, "start", { shift: false, alt: false }]]);
   });
 
   test("dragging pans instead of highlighting; a plain tap still highlights", () => {

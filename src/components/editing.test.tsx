@@ -112,7 +112,7 @@ describe("PatternView editing", () => {
     fireEvent.pointerUp(canvas, at(1, 1));
     fireEvent.pointerMove(canvas, at(0, 1)); // not pressed: ignored
     expect(onEdit.mock.calls).toEqual([
-      [0, "start"],
+      [0, "start", { shift: false, alt: false }],
       [1, "move"],
       [3, "move"],
     ]);
@@ -124,7 +124,7 @@ describe("PatternView editing", () => {
     const canvas = container.querySelector("canvas")!;
     fireEvent.pointerDown(canvas, at(1, 0));
     fireEvent.pointerMove(canvas, at(0, 0));
-    expect(onEdit.mock.calls).toEqual([[1, "start"]]);
+    expect(onEdit.mock.calls).toEqual([[1, "start", { shift: false, alt: false }]]);
   });
 
   test("clicks don't highlight while editing", () => {
@@ -132,7 +132,7 @@ describe("PatternView editing", () => {
     const { container } = render(<PatternView {...base} onPickColor={onPickColor} tool="erase" onEdit={mock()} />);
     fireEvent.click(container.querySelector("canvas")!, at(0, 0));
     expect(onPickColor).not.toHaveBeenCalled();
-    expect(container.querySelector(".pattern-status")!.textContent).toBe("Click or drag to remove beads.");
+    expect(container.querySelector(".pattern-status")!.textContent).toBe("Click or drag to remove beads · Shift-click erases a line.");
   });
 
   test("without a tool, pointer presses don't edit", () => {
@@ -499,5 +499,74 @@ describe("warning before settings change hand edits", () => {
     expect(prompt() === null).toBe(true);
     await waitFor(() => expect(document.querySelector(".pattern-size")!.textContent).toBe("54 × 54 beads"));
     expect(screen.getByText("1 bead edited by hand")).toBeTruthy();
+  });
+});
+
+describe("editing tools in the app", () => {
+  const solid = (w: number, h: number) => {
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) data.set(x < w / 2 ? [200, 30, 40, 255] : [40, 90, 200, 255], (y * w + x) * 4);
+    return data;
+  };
+  const cellPx = 400 / 52;
+  const at = (x: number, y: number, extra = {}) => ({ clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1, ...extra });
+  const canvas = () => document.querySelector(".pattern-canvas")!;
+  const click = (x: number, y: number, extra = {}) => {
+    fireEvent.pointerDown(canvas(), at(x, y, extra));
+    fireEvent.pointerUp(canvas(), at(x, y, extra));
+  };
+  const edited = () => Number(screen.queryByText(/edited by hand/)?.textContent?.match(/[\d,]+/)?.[0]?.replace(/,/g, "") ?? 0);
+  const key = (k: string, extra = {}) => fireEvent.keyDown(window, { key: k, ...extra });
+
+  async function editing() {
+    mockPixels(solid);
+    render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(canvas()).toBeTruthy());
+    fireEvent.click(screen.getByText("Edit beads"));
+  }
+
+  test("brush size 3 paints a 3 × 3 square; ] and [ change the size", async () => {
+    await editing();
+    key("e"); // erase: a change on any bead counts
+    key("]");
+    key("]");
+    expect(within(screen.getByRole("radiogroup", { name: "Brush size" })).getByRole("radio", { name: "3" }).getAttribute("aria-checked")).toBe("true");
+    click(10, 10);
+    await waitFor(() => expect(edited()).toBe(9));
+    key("[");
+    expect(within(screen.getByRole("radiogroup", { name: "Brush size" })).getByRole("radio", { name: "2" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("Shift-click erases a straight line from the last bead", async () => {
+    await editing();
+    key("e");
+    click(5, 5);
+    click(15, 5, { shiftKey: true });
+    await waitFor(() => expect(edited()).toBe(11));
+  });
+
+  test("fill and replace take a whole area in one undo step; redo brings it back", async () => {
+    await editing();
+    key("g");
+    expect(screen.getByRole("radio", { name: "Fill" }).getAttribute("aria-checked")).toBe("true");
+    click(40, 10); // the blue half: 26 × 52
+    await waitFor(() => expect(edited()).toBe(26 * 52));
+    key("z", { metaKey: true });
+    await waitFor(() => expect(edited()).toBe(0));
+    key("z", { metaKey: true, shiftKey: true });
+    await waitFor(() => expect(edited()).toBe(26 * 52));
+    key("r");
+    expect(screen.getByRole("radio", { name: "Replace" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("Alt-click picks a colour; Esc finishes editing", async () => {
+    await editing();
+    key("e");
+    click(40, 10, { altKey: true }); // picks blue, back to paint, nothing edited
+    expect(screen.getByRole("radio", { name: "Paint" }).getAttribute("aria-checked")).toBe("true");
+    expect(edited()).toBe(0);
+    key("Escape");
+    expect(screen.getByText("Edit beads")).toBeTruthy();
   });
 });

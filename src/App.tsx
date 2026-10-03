@@ -12,6 +12,7 @@ import { imageFingerprint, loadBookmarks, mergeBookmarks, sameCandidate, saveBoo
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
 import { applyEdits, outlineRing, padPattern, shiftEdits, type Edits } from "./lib/cleanup";
+import { brushCells, BRUSH_SIZES, fillCells, sameColourCells, strokeCells, type BrushSize } from "./lib/editing";
 import { brandIdOf, brandsForSize, colorLabel, DEFAULT_BRAND_ID, getBrand, parseBrandId, SIZES, sourcesOf, type BeadColor, type BrandChoice } from "./lib/palettes";
 import { applySwaps, type Pattern } from "./lib/pattern";
 import { buildPattern, type PipelineSettings } from "./lib/pipeline";
@@ -177,6 +178,10 @@ export function App() {
   const [undoStack, setUndoStack] = useState<Edits[]>([]);
   const [tool, setTool] = useState<EditTool | null>(null);
   const [brush, setBrush] = useState<BeadColor | null>(null);
+  const [brushSize, setBrushSize] = useState<BrushSize>(1);
+  const [redoStack, setRedoStack] = useState<Edits[]>([]);
+  // The last bead of the last paint/erase stroke: Shift-click draws a line from it.
+  const lastStroke = useRef<number | null>(null);
 
   const brand = getBrand(brandId);
   // "Colours I have" is kept per chart; a mix of brands uses all of theirs.
@@ -194,6 +199,7 @@ export function App() {
     setEditsAck(false);
     setEdits({ w: 0, h: 0, map: new Map() });
     setUndoStack([]);
+    setRedoStack([]);
   }, []);
 
   /** A new image starts a new, unsaved project with no colour or hand edits. */
@@ -368,29 +374,42 @@ export function App() {
   };
   const changeImageSettings = (next: ImageSettings) => guardEdits(() => setImageSettings(next));
 
-  const onEdit = (index: number, phase: "start" | "move") => {
+  /** Sets `cells` to `value` (a colour, or null to remove) as hand edits. */
+  const applyCells = (cells: number[], value: BeadColor | null) => {
     if (!pattern) return;
-    if (tool === "pick") {
+    setEdits((prev) => {
+      const fits = prev.w === pattern.width && prev.h === pattern.height;
+      const map = new Map(fits ? prev.map : undefined);
+      for (const i of cells) map.set(i, value);
+      return { w: pattern.width, h: pattern.height, map };
+    });
+  };
+
+  const onEdit = (index: number, phase: "start" | "move", mods?: { shift: boolean; alt: boolean }) => {
+    if (!pattern || !tool) return;
+    // Pick (or Alt-click with any tool): take the bead's colour and go back to painting.
+    if (tool === "pick" || mods?.alt) {
       const idx = pattern.cells[index]!;
       if (idx >= 0) {
         setBrush(pattern.colors[idx]!);
-        setTool("paint");
+        if (tool === "pick" || tool === "erase") setTool("paint");
       }
       return;
     }
     const value = tool === "erase" ? null : (brush ?? pattern.colors[0] ?? null);
-    if (tool === "paint" && !value) return;
+    if (tool !== "erase" && !value) return;
+    const { width: w, height: h } = pattern;
     if (phase === "start") {
       setEditsAck(false);
-      // One undo step per stroke.
+      // One undo step per stroke, fill or replace.
       pushUndo();
     }
-    setEdits((prev) => {
-      const fits = prev.w === pattern.width && prev.h === pattern.height;
-      const map = new Map(fits ? prev.map : undefined);
-      map.set(index, value);
-      return { w: pattern.width, h: pattern.height, map };
-    });
+    if (tool === "fill") return applyCells(fillCells(pattern, index), value);
+    if (tool === "replace") return applyCells(sameColourCells(pattern, index), value);
+    // Paint / erase: Shift-click continues in a straight line; dragging fills the gaps between points.
+    const from = phase === "move" || (mods?.shift && lastStroke.current !== null) ? lastStroke.current : null;
+    applyCells(from !== null && from < w * h ? strokeCells(from, index, w, h, brushSize) : brushCells(index, w, h, brushSize), value);
+    lastStroke.current = index;
   };
 
   /** Adds or removes the empty ring round the pattern, moving hand edits (and undo steps) with it. */
@@ -405,7 +424,10 @@ export function App() {
     setImageSettings({ ...imageSettings, edgeMargin: on });
   };
 
-  const pushUndo = () => setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), editsFit ? edits.map : new Map()]);
+  const pushUndo = () => {
+    setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), editsFit ? edits.map : new Map()]);
+    setRedoStack([]);
+  };
 
   /** Adds a one-bead outline round the shape as it is now, as hand edits (one undo step). */
   const addOutlineNow = () => {
@@ -430,7 +452,16 @@ export function App() {
     const prev = undoStack[undoStack.length - 1];
     if (!prev) return;
     setUndoStack(undoStack.slice(0, -1));
+    setRedoStack((r) => [...r, editsFit ? edits.map : new Map()]);
     setEdits((e) => ({ ...e, map: prev }));
+  };
+
+  const redo = () => {
+    const next = redoStack[redoStack.length - 1];
+    if (!next) return;
+    setRedoStack(redoStack.slice(0, -1));
+    setUndoStack((u) => [...u, editsFit ? edits.map : new Map()]);
+    setEdits((e) => ({ ...e, map: next }));
   };
 
   /** Eyedropper on the source thumbnail: sample the clicked pixel as the background colour. */
@@ -646,8 +677,7 @@ export function App() {
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
-  // Fullscreen keys: Esc exits, + / − / 0 zoom, Ctrl/⌘+Z undoes. Ignored while typing or in a dialog.
-  const undoRef = useRef(() => {});
+  // Fullscreen keys: Esc exits, + / − / 0 zoom (undo/redo are editing shortcuts). Ignored while typing or in a dialog.
   useEffect(() => {
     if (!fullscreen) return;
     const prevOverflow = document.body.style.overflow;
@@ -657,10 +687,7 @@ export function App() {
       const typing = e.target instanceof Element && e.target.closest("input, textarea, select");
       if (typing || document.querySelector(".modal-backdrop")) return;
       if (e.key === "Escape") exitFullscreen();
-      else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        undoRef.current();
-      } else if (e.metaKey || e.ctrlKey || e.altKey) return;
+      else if (e.metaKey || e.ctrlKey || e.altKey) return;
       else if (e.key === "+" || e.key === "=") zoomBy(1.25);
       else if (e.key === "-" || e.key === "_") zoomBy(1 / 1.25);
       else if (e.key === "0") setZoom(1);
@@ -671,6 +698,35 @@ export function App() {
       document.body.style.overflow = prevOverflow;
     };
   }, [fullscreen, exitFullscreen, zoomBy]);
+
+  // Editing shortcuts (while editing, not typing, no dialog open): tools, brush size, undo/redo, Esc.
+  const editKeys = useRef<(e: KeyboardEvent) => void>(() => {});
+  editKeys.current = (e: KeyboardEvent) => {
+    if (!tool) return;
+    const typing = e.target instanceof Element && e.target.closest("input, textarea, select");
+    if (typing || document.querySelector(".modal-backdrop")) return;
+    const key = e.key.toLowerCase();
+    if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y")) {
+      e.preventDefault();
+      if (key === "y" || e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tools: Record<string, EditTool> = { b: "paint", p: "paint", e: "erase", g: "fill", r: "replace", i: "pick" };
+    if (tools[key]) setTool(tools[key]);
+    else if (key === "[" || key === "]") {
+      const i = BRUSH_SIZES.indexOf(brushSize) + (key === "]" ? 1 : -1);
+      setBrushSize(BRUSH_SIZES[Math.max(0, Math.min(BRUSH_SIZES.length - 1, i))]!);
+    } else if (key === "escape" && !fullscreen) setTool(null);
+    else return;
+    e.preventDefault();
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => editKeys.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Ctrl/⌘+S saves the open project (or opens the save dialog).
   const quickSaveRef = useRef(quickSave);
@@ -686,7 +742,6 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  undoRef.current = undo;
   const showOriginal = display.original && !!image;
   const cropPx = image && !isFullCrop(crop) ? cropPixels(crop, image.naturalWidth || image.width, image.naturalHeight || image.height) : null;
   const brushOrDefault = brush ?? pattern?.colors[0] ?? null;
@@ -696,8 +751,12 @@ export function App() {
       onTool={setTool}
       brush={brushOrDefault}
       onChooseBrush={() => setModal({ kind: "brush" })}
+      brushSize={brushSize}
+      onBrushSize={setBrushSize}
       canUndo={undoStack.length > 0}
       onUndo={undo}
+      canRedo={redoStack.length > 0}
+      onRedo={redo}
       canClear={handEditCount > 0}
       outline={{
         color: outlineColor,
@@ -1055,6 +1114,7 @@ export function App() {
                     codes={display.codes}
                     tool={tool}
                     onEdit={onEdit}
+                    brushSize={brushSize}
                     onPickColor={setHighlightId}
                     fit
                     zoom={fullscreen ? 1 : zoom}
@@ -1180,6 +1240,7 @@ export function App() {
               codes={display.codes}
               tool={tool}
               onEdit={onEdit}
+              brushSize={brushSize}
               onPickColor={setHighlightId}
               fullscreen
               zoom={zoom}
