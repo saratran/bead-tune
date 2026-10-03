@@ -3,7 +3,8 @@ import { beadsOn, boardsOf, leftOn, progressOf } from "../lib/build";
 import { cropPattern } from "../lib/cleanup";
 import type { Pattern } from "../lib/pattern";
 import { colorLabel } from "../lib/palettes";
-import { drawPattern } from "../lib/render";
+import { drawPattern, type CellShape } from "../lib/render";
+import { ShapePicker } from "./ShapePicker";
 import { canvasScale } from "./PatternView";
 import { Toggle } from "./Toggle";
 
@@ -15,6 +16,9 @@ interface Props {
   placed: ReadonlySet<number>;
   onPlaced: (placed: Set<number>) => void;
   theme: string;
+  /** How beads are drawn (shared with the main view). */
+  shape: CellShape;
+  onShape: (shape: CellShape) => void;
   onClose: () => void;
 }
 
@@ -22,7 +26,7 @@ interface Props {
  * Build mode: one pegboard at a time. Tap (or drag over) beads to mark them placed;
  * pick a colour to see only its beads. Progress is kept with the project.
  */
-export function BuildMode({ pattern, boardSize, title, placed, onPlaced, theme, onClose }: Props) {
+export function BuildMode({ pattern, boardSize, title, placed, onPlaced, theme, shape, onShape, onClose }: Props) {
   const boards = useMemo(() => boardsOf(pattern, boardSize), [pattern, boardSize]);
   // Start on the first board that still needs beads.
   const [boardIdx, setBoardIdx] = useState(() => Math.max(0, boards.findIndex((b) => beadsOn(pattern, b).some((i) => !placed.has(i)))));
@@ -70,7 +74,7 @@ export function BuildMode({ pattern, boardSize, title, placed, onPlaced, theme, 
     const token = (n: string) => css.getPropertyValue(n).trim() || undefined;
     drawPattern(ctx, boardPattern, {
       cell,
-      shape: "bead",
+      shape,
       codes,
       boardSize,
       showBoards: false,
@@ -99,7 +103,7 @@ export function BuildMode({ pattern, boardSize, title, placed, onPlaced, theme, 
         }
       }
     }
-  }, [boardPattern, board, cell, codes, colour, placed, pattern, boardSize, theme]);
+  }, [boardPattern, board, cell, codes, colour, placed, pattern, boardSize, theme, shape]);
 
   // Tap toggles a bead; dragging sets every bead passed over the same way. With a colour
   // picked, only that colour's beads are touched.
@@ -158,6 +162,7 @@ export function BuildMode({ pattern, boardSize, title, placed, onPlaced, theme, 
           </span>
         </div>
         <progress className="build-meter" max={total} value={done} aria-label="Build progress" />
+        <ShapePicker value={shape} onChange={onShape} />
         <Toggle label="Codes" checked={codes} onChange={setCodes} />
         {confirmReset ? (
           <span className="row">

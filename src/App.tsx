@@ -1308,6 +1308,8 @@ export function App() {
           placed={buildFits ? build.placed : new Set()}
           onPlaced={(placed) => setBuild({ w: pattern.width, h: pattern.height, placed })}
           theme={theme}
+          shape={display.shape}
+          onShape={(shape) => setDisplay({ ...display, shape })}
           onClose={() => setBuildOpen(false)}
         />
       )}

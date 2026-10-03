@@ -602,8 +602,14 @@ describe("build mode", () => {
     expect(within(dlg).getByText(/Board 1 of 4/)).toBeTruthy();
     expect(within(dlg).getByText(/done ✓/)).toBeTruthy();
 
+    // Bead shapes, shared with the main view.
+    expect(within(dlg).getByRole("radio", { name: "Square" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(within(dlg).getByRole("radio", { name: "Bead" }));
+    expect(within(dlg).getByRole("radio", { name: "Bead" }).getAttribute("aria-checked")).toBe("true");
+
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Build mode" }) === null).toBe(true);
     expect(screen.getByRole("button", { name: "Build · 25%" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Bead" }).getAttribute("aria-checked")).toBe("true");
   });
 });
