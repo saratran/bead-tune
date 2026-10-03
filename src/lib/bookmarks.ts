@@ -11,7 +11,7 @@ export interface Bookmark {
   candidate: Candidate;
   /** PNG data URL of the pattern when it was bookmarked. */
   thumbnail: string;
-  /** Scores within the scan it came from (features is missing on older bookmarks). */
+  /** Scores (see SCORE_VERSION in auto.ts; features is missing on older bookmarks). */
   features?: number;
   likeness: number;
   ease: number;
@@ -19,8 +19,10 @@ export interface Bookmark {
   beads: number;
   strays: number;
   createdAt: number;
-  /** Scored on a fixed scale (your own settings), not relative to an Auto search. */
+  /** Your own settings (Bookmark current settings), not an Auto suggestion. */
   fixedScale?: boolean;
+  /** The score scale it was scored on; older bookmarks (missing or lower) get re-scored. */
+  scoreVersion?: number;
   /** The colour tone it was chosen for (natural if missing). */
   tone?: Tone;
   /** What the pattern was made with; applying it later uses your current width and bead set. */

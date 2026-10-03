@@ -2323,3 +2323,29 @@ button.zoom-level:hover:not(:disabled) {
     max-height: none;
   }
 }
+
+/* Original + pattern in the workspace: two equal halves sharing the stage's height. */
+.stage-canvas.compare.with-original {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.stage-canvas .original-view {
+  min-height: 0;
+}
+
+.stage-canvas .original-scroll {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .stage-canvas.compare.with-original {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}

@@ -28,7 +28,12 @@ if (!images.length) images = [...new Bun.Glob("references/input_*").scanSync()].
 const width = Number(flag("width", "52"));
 const outDir = flag("out", "auto-eval");
 const tones = flag("tones", "natural").split(",") as Tone[];
-const preset = BUILT_IN_PRESETS.find((p) => p.id === `builtin:${flag("preset", "balanced")}`)!;
+const found = BUILT_IN_PRESETS.find((p) => p.id === `builtin:${flag("preset", "balanced")}`)!;
+// --metric standard|accurate|both overrides the preset's colour matching.
+const metricFlag = flag("metric", "");
+const preset = metricFlag
+  ? { ...found, space: { ...found.space, metric: metricFlag === "both" ? (["standard", "accurate"] as const).slice() : [metricFlag as "standard" | "accurate"] } }
+  : found;
 mkdirSync(outDir, { recursive: true });
 const palette = BRANDS.find((b) => b.id === DEFAULT_BRAND_ID)!.colors;
 

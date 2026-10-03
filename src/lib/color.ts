@@ -117,6 +117,9 @@ export function deltaE2000([L1, a1, b1]: Lab, [L2, a2, b2]: Lab): number {
 export type ColorMetric = "standard" | "accurate";
 
 /** Distance between two Lab colours under the chosen metric (CIE76 or CIEDE2000). */
+const cie76 = (a: Lab, b: Lab) => Math.sqrt(labDistSq(a, b));
+
+/** The distance function for a metric (the same function each time, so results can be cached by it). */
 export function colorDistance(metric: ColorMetric): (a: Lab, b: Lab) => number {
-  return metric === "accurate" ? deltaE2000 : (a, b) => Math.sqrt(labDistSq(a, b));
+  return metric === "accurate" ? deltaE2000 : cie76;
 }

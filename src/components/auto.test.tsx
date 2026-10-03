@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
-import { DEFAULT_SEARCH_SPACE } from "../lib/auto";
+import { DEFAULT_SEARCH_SPACE, SCORE_VERSION } from "../lib/auto";
 import {
   allPresets,
   BUILT_IN_PRESETS,
@@ -85,12 +85,13 @@ describe("AutoDialog", () => {
     expect(smooth.disabled).toBe(true);
   });
 
-  test("warns when only an even spread will be tried, and about Accurate being slow", () => {
+  test("warns when only an even spread will be tried, and when both colour matchings double the time", () => {
     renderDialog();
     fireEvent.change(screen.getByLabelText("Try at most"), { target: { value: "100" } });
     expect(count()).toContain("trying an even spread of 100");
-    fireEvent.click(chip("Colour matching", "Accurate (slower)"));
-    expect(count()).toContain("several times slower");
+    expect(chip("Colour matching", "Accurate").getAttribute("aria-pressed")).toBe("true"); // the default
+    fireEvent.click(chip("Colour matching", "Standard (faster)"));
+    expect(count()).toContain("doubles the time");
   });
 
   test("finds suggestions and applies one", async () => {
@@ -616,7 +617,7 @@ describe("sorting", () => {
     r.rerender(<AutoDialog source={source} base={base} results={list} onResults={r.onResults} onApply={r.onApply} bookmarks={[]} onBookmarksChange={mock()} onClose={r.onClose} />);
     if (list.length < 2) return;
     fireEvent.change(screen.getByLabelText("Sort suggestions"), { target: { value: "colors-asc" } });
-    const shown = [...document.querySelectorAll(".auto-results .auto-card .small")].filter((e) => /colours · /.test(e.textContent!)).map((e) => Number(e.textContent!.split(" ")[0]));
+    const shown = [...document.querySelectorAll(".auto-results .auto-card .small")].filter((e) => /colours · [\d,]+ beads/.test(e.textContent!)).map((e) => Number(e.textContent!.split(" ")[0]));
     expect(shown).toEqual([...shown].sort((a, b) => a - b));
 
     const firstLabel = document.querySelector(".auto-results .auto-card strong")!.textContent!;
@@ -625,7 +626,7 @@ describe("sorting", () => {
     fireEvent.keyDown(document.body, { key: "Escape" });
 
     r.unmount();
-    renderDialog({ results: list });
+    renderDialog({ results: list, initialTab: "results" });
     expect((screen.getByLabelText("Sort suggestions") as HTMLSelectElement).value).toBe("colors-asc");
   }, 30000);
 });
@@ -671,7 +672,7 @@ describe("Results tab and bookmarking your own settings", () => {
     expect(screen.getByRole("tab", { name: /Results/ }).getAttribute("aria-selected")).toBe("true");
     const section = screen.getByRole("region", { name: "Bookmarks" });
     expect(within(section).getByText("My settings 1")).toBeTruthy();
-    expect(within(section).getByText("Your settings · scores on a fixed scale")).toBeTruthy();
+    expect(within(section).getByText("Your settings")).toBeTruthy();
 
     fireEvent.click(within(section).getByText("More like this"));
     await waitFor(() => expect(screen.getByText("Based on your picks")).toBeTruthy(), { timeout: 15000 });
@@ -686,5 +687,21 @@ describe("Results tab and bookmarking your own settings", () => {
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Sampling" })).getByRole("radio", { name: "Pixel art" }));
     fireEvent.click(screen.getByText("★ Bookmark current settings"));
     expect(toast()).toContain("Pixel art settings can't be bookmarked");
+  });
+});
+
+describe("scores on one scale", () => {
+  test("old bookmarks are re-scored on the image's scale when Results opens", async () => {
+    const candidate = { sampling: "smooth" as const, denoise: false, maxColors: 8, dither: { mode: "none" as const, strength: 0 }, cleanup: 0, metric: "standard" as const, minBeads: 0, brightness: 0, contrast: 0, saturation: 0 };
+    const old = { id: "b1", label: "Old", candidate, thumbnail: "data:image/png;base64,AA==", likeness: 99, ease: 99, colors: 8, beads: 144, strays: 2, createdAt: 1, context: { width: 12, brandId: "mard" } };
+    const { onBookmarksChange } = renderDialog({ initialTab: "results", bookmarks: [old] });
+    await waitFor(() => expect(onBookmarksChange).toHaveBeenCalled(), { timeout: 5000 });
+    const [updated] = onBookmarksChange.mock.lastCall![0];
+    expect(updated.scoreVersion).toBe(SCORE_VERSION);
+    expect(updated.likeness).not.toBe(99);
+    for (const k of ["features", "likeness", "ease"] as const) {
+      expect(updated[k]).toBeGreaterThanOrEqual(0);
+      expect(updated[k]).toBeLessThanOrEqual(100);
+    }
   });
 });

@@ -7,7 +7,7 @@ import { PatternView, type EditTool } from "./components/PatternView";
 import { ProjectsDialog, type OpenProject } from "./components/ProjectsDialog";
 import { CropDialog } from "./components/CropDialog";
 import { AutoDialog, type AutoTab } from "./components/AutoDialog";
-import { effortCost, featureCost, likenessCost, makeEvaluator, type Candidate, type RefinedSuggestion } from "./lib/auto";
+import { absoluteScores, anchorsSync, makeEvaluator, SCORE_VERSION, toneForSaturation, type Candidate, type RefinedSuggestion } from "./lib/auto";
 import { imageFingerprint, loadBookmarks, mergeBookmarks, sameCandidate, saveBookmarks, type Bookmark } from "./lib/bookmarks";
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
@@ -720,9 +720,13 @@ export function App() {
     const c = currentCandidate();
     if (!c) return "Pixel art settings can't be bookmarked — Auto doesn't search pixel art.";
     if (bookmarks.some((b) => sameCandidate(b.candidate, c))) return "These settings are already bookmarked.";
-    const r = makeEvaluator(source, pipelineSettings(imageSettings, width))(c);
+    // Scored against the tone the settings go for (a big saturation boost is a vivid choice, not an error).
+    const tone = toneForSaturation(c.saturation);
+    const evaluate = makeEvaluator(source, pipelineSettings(imageSettings, width), tone);
+    const r = evaluate(c);
     if (!r) return "Nothing to bookmark: the pattern is empty.";
-    const pct = (cost: number) => Math.round(100 * Math.min(1, Math.max(0, 1 - cost)));
+    const anchors = anchorsSync(evaluate, tone);
+    const scores = anchors ? absoluteScores(r.metrics, anchors) : { features: 0, likeness: 0, ease: 0 };
     const n = bookmarks.filter((b) => /^My settings \d+$/.test(b.label)).length + 1;
     const label = `My settings ${n}`;
     setBookmarks([
@@ -732,15 +736,14 @@ export function App() {
         label,
         candidate: c,
         thumbnail: patternThumbnail(r.pattern),
-        features: pct(featureCost(r.metrics)),
-        likeness: pct(likenessCost(r.metrics)),
-        ease: pct(effortCost(r.metrics)),
+        ...scores,
         colors: r.metrics.colors,
         beads: r.metrics.beads,
         strays: r.metrics.strays,
         createdAt: Date.now(),
-        tone: "natural",
+        tone,
         fixedScale: true,
+        scoreVersion: SCORE_VERSION,
         context: { width, brandId },
       },
     ]);

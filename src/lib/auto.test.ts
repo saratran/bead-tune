@@ -16,6 +16,10 @@ import {
   spaceForTone,
   TONE_CHROMA,
   tuneFromPreferences,
+  absoluteScores,
+  anchorCandidates,
+  anchorsSync,
+  toneForSaturation,
   batched,
   pickName,
   countCombinations,
@@ -415,5 +419,39 @@ describe("colour tone", () => {
     const pick: Candidate = { sampling: "smooth", denoise: false, maxColors: 12, dither: { mode: "none", strength: 0 }, cleanup: 0, metric: "standard", minBeads: 0, brightness: 0, contrast: 0, saturation: 30 };
     const [tuned] = await tuneFromPreferences(imageDataSource(img), base, [{ label: "Vivid pick", candidate: pick, tone: "vivid" }], { count: 1, refine: { method: "pattern", budget: 10 } });
     expect(tuned!.tone).toBe("vivid");
+  });
+});
+
+describe("image-anchored scores", () => {
+  const img = makeImageData(48, 48);
+  for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) {
+    const disc = (x - 24) ** 2 + (y - 24) ** 2 < 11 ** 2;
+    img.data.set(disc ? [210, 40, 50, 255] : [30, 60 + y, 120 + x, 255], (y * 48 + x) * 4);
+  }
+  const source = imageDataSource(img);
+  const base: PipelineSettings = { width: 16, sampling: "smooth", denoise: false, trim: false, cleanup: 0, outline: null, crop: FULL_CROP, options: { ...DEFAULT_PATTERN_OPTIONS, palette: mard } };
+
+  test("the anchors score 100 and 0 (ease the other way round)", () => {
+    const evaluate = makeEvaluator(source, base);
+    const anchors = anchorsSync(evaluate)!;
+    const { best, crude } = anchorCandidates();
+    expect(absoluteScores(evaluate(best)!.metrics, anchors)).toMatchObject({ features: 100, likeness: 100, ease: 0 });
+    expect(absoluteScores(evaluate(crude)!.metrics, anchors)).toMatchObject({ features: 0, likeness: 0, ease: 100 });
+  });
+
+  test("scores don't depend on what else was scanned", async () => {
+    const small: SearchSpace = { ...DEFAULT_SEARCH_SPACE, sampling: ["smooth"], maxColors: [8, 16], dither: [{ mode: "none", strength: 0 }], cleanup: [0], contrast: [0], saturation: [0] };
+    const wide: SearchSpace = { ...small, maxColors: [4, 8, 16, 40], cleanup: [0, 2] };
+    const a = await autoSuggest(source, base, { space: small, count: 4, limit: 100, refine: null });
+    const b = await autoSuggest(source, base, { space: wide, count: 6, limit: 100, refine: null });
+    const same = a.find((s) => b.some((t) => JSON.stringify(t.candidate) === JSON.stringify(s.candidate)))!;
+    const other = b.find((t) => JSON.stringify(t.candidate) === JSON.stringify(same.candidate))!;
+    expect([other.features, other.likeness, other.ease]).toEqual([same.features, same.likeness, same.ease]);
+  });
+
+  test("a big saturation boost is judged as vivid, a big cut as muted", () => {
+    expect(toneForSaturation(48)).toBe("vivid");
+    expect(toneForSaturation(-30)).toBe("muted");
+    expect(toneForSaturation(10)).toBe("natural");
   });
 });

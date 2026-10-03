@@ -55,7 +55,9 @@ export const DEFAULT_SEARCH_SPACE: SearchSpace = {
     { mode: "diffusion", strength: 60 },
   ],
   cleanup: [0, 1],
-  metric: ["standard"],
+  // Accurate (CIEDE2000) keeps more detail with fewer colours on real images, and is
+  // only ~1.7× slower now that matching is shortlisted (see scripts/eval-auto.ts --metric).
+  metric: ["accurate"],
   minBeads: [0],
   brightness: [0],
   contrast: [0, 15],
@@ -691,6 +693,78 @@ export async function scan(
   return results.filter((r): r is Evaluated => r !== null);
 }
 
+// ---------------------------------------------------------------- scores shown to people
+
+/**
+ * Displayed scores are anchored to the image, not to whatever a search happened
+ * to try, so they mean the same for suggestions, bookmarks, your own settings and
+ * every run: 100 = as good as beads get for this image (all colours, accurate
+ * matching, nothing simplified); 0 = a deliberately crude version (6 colours,
+ * heavy clean-up). Ease runs the other way: the crude version is 100.
+ * Bump SCORE_VERSION when this scale changes, so stored bookmarks are re-scored.
+ */
+export const SCORE_VERSION = 2;
+
+export interface Anchors {
+  best: Metrics;
+  crude: Metrics;
+}
+
+export interface Scores {
+  features: number;
+  likeness: number;
+  ease: number;
+}
+
+/** The two reference settings for a tone (vivid/muted anchors lean the same way). */
+export function anchorCandidates(tone: Tone = "natural"): { best: Candidate; crude: Candidate } {
+  const saturation = TONE_SATURATION[tone][0] ?? 0;
+  const plain = { sampling: "smooth" as const, denoise: false, dither: { mode: "none" as const, strength: 0 }, minBeads: 0, brightness: 0, contrast: 0, saturation };
+  return {
+    best: { ...plain, maxColors: 120, cleanup: 0, metric: "accurate" },
+    crude: { ...plain, maxColors: 6, cleanup: 3, metric: "standard" },
+  };
+}
+
+/** Scores the anchors with `evaluate` (null if the image gives an empty pattern). */
+export async function anchorsFor(evaluate: EvaluateMany, tone: Tone = "natural", signal?: AbortSignal): Promise<Anchors | null> {
+  const { best, crude } = anchorCandidates(tone);
+  const [b, c] = await evaluate([best, crude], undefined, signal);
+  return b && c ? { best: b.metrics, crude: c.metrics } : null;
+}
+
+/** As anchorsFor, for a one-at-a-time evaluator. */
+export function anchorsSync(evaluate: (c: Candidate) => Evaluated | null, tone: Tone = "natural"): Anchors | null {
+  const { best, crude } = anchorCandidates(tone);
+  const b = evaluate(best), c = evaluate(crude);
+  return b && c ? { best: b.metrics, crude: c.metrics } : null;
+}
+
+/** 0–100 between the anchors: `good` scores 100, `bad` 0; clamped. */
+function between(value: number, good: number, bad: number): number {
+  const span = bad - good;
+  if (Math.abs(span) < 1e-9) return 50;
+  return Math.round(Math.min(100, Math.max(0, (100 * (bad - value)) / span)));
+}
+
+export function absoluteScores(m: Metrics, a: Anchors): Scores {
+  return {
+    features: between(featureCost(m), featureCost(a.best), featureCost(a.crude)),
+    likeness: between(likenessCost(m), likenessCost(a.best), likenessCost(a.crude)),
+    ease: between(effortCost(m), effortCost(a.crude), effortCost(a.best)),
+  };
+}
+
+/** Replaces a suggestion's search-relative scores with image-anchored ones. */
+export function withAbsoluteScores<T extends { metrics: Metrics } & Scores>(s: T, anchors: Anchors | null): T {
+  return anchors ? { ...s, ...absoluteScores(s.metrics, anchors) } : s;
+}
+
+/** The tone a set of settings is going for, judged by its saturation. */
+export function toneForSaturation(saturation: number): Tone {
+  return saturation >= 20 ? "vivid" : saturation <= -20 ? "muted" : "natural";
+}
+
 // ---------------------------------------------------------------- refinement
 
 /*
@@ -1005,8 +1079,10 @@ export async function autoSuggest(
         finals.push({ ...s, label: r.label, reason: r.reason, ...(changed ? { refinedFrom: r.from } : {}) });
       }
     }
+    // Shown scores are anchored to the image (see SCORE_VERSION); selection above used the search's own spread.
+    const anchors = await anchorsFor(evaluate, tone, signal);
     // A pattern already suggested for another tone isn't repeated.
-    for (const f of finals) if (!out.some((o) => difference(o.pattern, f.pattern) < MIN_DIFFERENCE)) out.push({ ...f, tone });
+    for (const f of finals) if (!out.some((o) => difference(o.pattern, f.pattern) < MIN_DIFFERENCE)) out.push(withAbsoluteScores({ ...f, tone }, anchors));
   }
   if (options.refine) onProgress?.({ phase: "refine", done: refineTotal, total: refineTotal });
   return out;
@@ -1134,6 +1210,8 @@ export async function tuneFromPreferences(
   onProgress?.({ phase: "refine", done: total, total });
 
   const rated = new Map([...pools].map(([tone, pool]) => [tone, new Map(rate(pool).map((r) => [JSON.stringify(r.candidate), r]))]));
+  const anchors = new Map<Tone, Anchors | null>();
+  for (const tone of pools.keys()) anchors.set(tone, await anchorsFor(engine.forTone(tone), tone, signal));
   const out: RefinedSuggestion[] = [];
   // Picks take turns: every pick's "Tuned" first, then their second variation, and so on.
   for (let k = 0; out.length < options.count && perPick.some((l) => l.length > k); k++) {
@@ -1143,7 +1221,7 @@ export async function tuneFromPreferences(
       const s = rated.get(r.tone)!.get(JSON.stringify(r.best.candidate))!;
       if (out.some((o) => difference(o.pattern, s.pattern) < MIN_DIFFERENCE / 2)) continue;
       const changed = JSON.stringify(r.best.candidate) !== JSON.stringify(r.from);
-      out.push({ ...s, label: r.label, tone: r.tone, reason: changed ? r.reason : "Already the best version of this pick", ...(changed ? { refinedFrom: r.from } : {}) });
+      out.push(withAbsoluteScores({ ...s, label: r.label, tone: r.tone, reason: changed ? r.reason : "Already the best version of this pick", ...(changed ? { refinedFrom: r.from } : {}) }, anchors.get(r.tone) ?? null));
     }
   }
   return out;

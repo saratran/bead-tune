@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  anchorsFor,
+  absoluteScores,
   autoSuggest,
   candidateSettings,
+  SCORE_VERSION,
   localEngine,
   type AutoEngine,
   countCombinations,
@@ -375,7 +378,6 @@ export function AutoDialog({
 
   const total = countCombinations(config.space);
   const trying = Math.min(total, config.limit);
-  const accurate = config.space.metric.includes("accurate");
 
   const run = async () => {
     const ctrl = new AbortController();
@@ -456,10 +458,39 @@ export function AutoDialog({
         beads: s.metrics.beads,
         strays: s.metrics.strays,
         createdAt: Date.now(),
+        scoreVersion: SCORE_VERSION,
         context: { width: base.width, brandId: base.options.palette[0]?.id.split(":")[0] ?? "" },
       },
     ]);
   };
+
+  // Bookmarks scored on an older scale are re-scored once (for the current width), so every
+  // card uses the same ruler. Ones made at another width keep their numbers until used there.
+  const rescoring = useRef(false);
+  useEffect(() => {
+    const stale = bookmarks.filter((b) => (b.scoreVersion ?? 0) < SCORE_VERSION && b.context.width === base.width);
+    if (!stale.length || rescoring.current) return;
+    rescoring.current = true;
+    void (async () => {
+      const engine = await getEngine();
+      const updated = new Map<string, Partial<Bookmark>>();
+      for (const tone of new Set(stale.map((b) => b.tone ?? "natural"))) {
+        const evaluate = engine.forTone(tone);
+        const anchors = await anchorsFor(evaluate, tone);
+        const group = stale.filter((b) => (b.tone ?? "natural") === tone);
+        const results = await evaluate(group.map((b) => b.candidate));
+        group.forEach((b, i) => {
+          const r = results[i];
+          if (r && anchors) updated.set(b.id, { ...absoluteScores(r.metrics, anchors), scoreVersion: SCORE_VERSION });
+        });
+      }
+      rescoring.current = false;
+      if (updated.size) onBookmarksChange(bookmarksRef.current.map((b) => (updated.has(b.id) ? { ...b, ...updated.get(b.id) } : b)));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookmarks, base.width]);
+  const bookmarksRef = useRef(bookmarks);
+  bookmarksRef.current = bookmarks;
 
   const choosePreset = (id: string) => {
     setConfirmDelete(false);
@@ -655,7 +686,7 @@ export function AutoDialog({
             <Chips label="Dithering" options={SEARCH_OPTIONS.dither} selected={space.dither} same={sameDither} format={ditherLabel} onChange={(v) => setSpace("dither", v)} />
             <Chips label="Remove stray beads" options={SEARCH_OPTIONS.cleanup} selected={space.cleanup} format={(v) => (v === 0 ? "Off" : String(v))} onChange={(v) => setSpace("cleanup", v)} />
             <Chips label="Min beads per colour" options={SEARCH_OPTIONS.minBeads} selected={space.minBeads} format={(v) => (v === 0 ? "Off" : String(v))} onChange={(v) => setSpace("minBeads", v)} />
-            <Chips label="Colour matching" options={["standard", "accurate"] as ("standard" | "accurate")[]} selected={space.metric} format={(v) => (v === "standard" ? "Standard" : "Accurate (slower)")} onChange={(v) => setSpace("metric", v)} />
+            <Chips label="Colour matching" options={["standard", "accurate"] as ("standard" | "accurate")[]} selected={space.metric} format={(v) => (v === "standard" ? "Standard (faster)" : "Accurate")} onChange={(v) => setSpace("metric", v)} />
             <Chips label="Brightness" options={SEARCH_OPTIONS.brightness} selected={space.brightness} format={signed} onChange={(v) => setSpace("brightness", v)} custom={{ min: -100, max: 100 }} />
             <Chips label="Contrast" options={SEARCH_OPTIONS.contrast} selected={space.contrast} format={signed} onChange={(v) => setSpace("contrast", v)} custom={{ min: -100, max: 100 }} />
             <Chips label="Saturation" options={SEARCH_OPTIONS.saturation} selected={space.saturation} format={signed} onChange={(v) => setSpace("saturation", v)} custom={{ min: -100, max: 100 }} />
@@ -718,7 +749,7 @@ export function AutoDialog({
               {total.toLocaleString()} combination{total === 1 ? "" : "s"}
               {config.tones.length > 1 && ` × ${config.tones.length} tones`}
               {total > trying && ` · trying an even spread of ${trying.toLocaleString()}`}
-              {accurate && " · Accurate matching is several times slower"}
+              {space.metric.length > 1 && " · trying both colour matchings doubles the time"}
             </span>
             {progress ? (
               <>
@@ -821,7 +852,7 @@ export function AutoDialog({
                         {b.colors} colours · {b.beads.toLocaleString()} beads · {b.strays} stray
                       </span>
                       <span className="muted small auto-settings">{describeCandidate(b.candidate)}</span>
-                      {b.fixedScale && <span className="muted small">Your settings · scores on a fixed scale</span>}
+                      {b.fixedScale && <span className="muted small">Your settings</span>}
                       {b.context.width !== base.width && <span className="muted small">Made at {b.context.width} beads wide</span>}
                       <div className="row">
                         <button className="btn btn-primary" onClick={() => onApply(b)}>
@@ -857,7 +888,7 @@ export function AutoDialog({
                 )}
               </div>
               <p className="hint">
-                Scores compare the suggestions with each other: features (outlines and fine details kept), likeness (overall colour) and ease (fewer colours and stray beads).
+                Scores are out of 100 for this image: 100 is as close as beads can get (every colour, accurate matching), 0 a crude 6-colour version. Features = outlines and fine details kept, likeness = overall colour (for the chosen tone), ease = fewer colours and stray beads.
               </p>
               {(() => {
                 // Group by colour tone; headings only when there's more than one.

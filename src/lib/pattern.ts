@@ -158,17 +158,35 @@ function backgroundMask(rgb: Float32Array, image: ImageData, opts: PatternOption
   return mask;
 }
 
+/** With a slow distance (CIEDE2000), only the nearest few by plain Lab distance are compared exactly. */
+const SHORTLIST = 6;
+
 /** Nearest-palette lookup restricted to `allowed`, memoised per RGB value. */
-function makeMatcher(palette: BeadColor[], allowed: number[], distance: (a: Lab, b: Lab) => number) {
+function makeMatcher(palette: BeadColor[], allowed: number[], distance: (a: Lab, b: Lab) => number, shortlist = false) {
   const cache = new Map<number, number>();
+  const near: { idx: number; d: number }[] = [];
   return (r: number, g: number, b: number): number => {
     const key = ((r | 0) << 16) | ((g | 0) << 8) | (b | 0);
     const hit = cache.get(key);
     if (hit !== undefined) return hit;
     const lab = rgbToLab(r | 0, g | 0, b | 0);
-    let bestIdx = allowed[0]!;
+    let candidates = allowed;
+    if (shortlist && allowed.length > SHORTLIST) {
+      // Keep the SHORTLIST nearest by squared Lab distance (insertion into a tiny sorted list).
+      near.length = 0;
+      for (const idx of allowed) {
+        const d = labDistSq(lab, palette[idx]!.lab);
+        if (near.length === SHORTLIST && d >= near[SHORTLIST - 1]!.d) continue;
+        let at = near.length;
+        while (at > 0 && near[at - 1]!.d > d) at--;
+        near.splice(at, 0, { idx, d });
+        if (near.length > SHORTLIST) near.pop();
+      }
+      candidates = near.map((n) => n.idx);
+    }
+    let bestIdx = candidates[0]!;
     let bestD = Infinity;
-    for (const idx of allowed) {
+    for (const idx of candidates) {
       const d = distance(lab, palette[idx]!.lab);
       if (d < bestD) {
         bestD = d;
@@ -180,6 +198,27 @@ function makeMatcher(palette: BeadColor[], allowed: number[], distance: (a: Lab,
   };
 }
 
+/** Distances between every pair of palette entries, computed once per palette and metric. */
+const pairCache = new WeakMap<BeadColor[], Map<(a: Lab, b: Lab) => number, Float32Array>>();
+function pairwise(palette: BeadColor[], distance: (a: Lab, b: Lab) => number): Float32Array {
+  let byMetric = pairCache.get(palette);
+  if (!byMetric) pairCache.set(palette, (byMetric = new Map()));
+  let m = byMetric.get(distance);
+  if (!m) {
+    const n = palette.length;
+    m = new Float32Array(n * n);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const d = distance(palette[i]!.lab, palette[j]!.lab);
+        m[i * n + j] = d;
+        m[j * n + i] = d;
+      }
+    }
+    byMetric.set(distance, m);
+  }
+  return m;
+}
+
 /**
  * Picks at most `max` palette entries: repeatedly drops the colour whose
  * pixels would be cheapest to repaint with their nearest remaining colour.
@@ -188,6 +227,8 @@ function makeMatcher(palette: BeadColor[], allowed: number[], distance: (a: Lab,
 function reducePalette(palette: BeadColor[], counts: number[], max: number, distance: (a: Lab, b: Lab) => number, protect: ReadonlySet<number> = new Set()): number[] {
   const kept = counts.map((c, i) => (c > 0 ? i : -1)).filter((i) => i >= 0);
   const weight = [...counts];
+  const dist = pairwise(palette, distance);
+  const n = palette.length;
   while (kept.length > max) {
     let worst = -1;
     let worstCost = Infinity;
@@ -199,7 +240,7 @@ function reducePalette(palette: BeadColor[], counts: number[], max: number, dist
       let nd = Infinity;
       for (let b = 0; b < kept.length; b++) {
         if (a === b) continue;
-        const d = distance(palette[ia]!.lab, palette[kept[b]!]!.lab);
+        const d = dist[ia * n + kept[b]!]!;
         if (d < nd) {
           nd = d;
           nearest = kept[b]!;
@@ -244,7 +285,7 @@ function mapPixels(
   opts: PatternOptions,
   distance: (a: Lab, b: Lab) => number,
 ): Int16Array {
-  const match = makeMatcher(palette, allowed, distance);
+  const match = makeMatcher(palette, allowed, distance, opts.metric === "accurate");
   const raw = new Int16Array(w * h).fill(EMPTY);
   const strength = Math.max(0, Math.min(100, opts.ditherStrength)) / 100;
   const mode = strength > 0 ? opts.dither : "none";
