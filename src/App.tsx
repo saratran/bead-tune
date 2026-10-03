@@ -410,8 +410,12 @@ export function App() {
       // One undo step per stroke, fill or replace.
       pushUndo();
     }
-    if (tool === "fill") return applyCells(fillCells(pattern, index), value);
     if (tool === "replace") return applyCells(sameColourCells(pattern, index), value);
+    // The Fill "size": paint or erase a connected area of one colour (once per click, not while dragging).
+    if (brushSize === "fill") {
+      if (phase === "start") applyCells(fillCells(pattern, index), value);
+      return;
+    }
     // Paint / erase: Shift-click continues in a straight line; dragging fills the gaps between points.
     const from = phase === "move" || (mods?.shift && lastStroke.current !== null) ? lastStroke.current : null;
     applyCells(from !== null && from < w * h ? strokeCells(from, index, w, h, brushSize) : brushCells(index, w, h, brushSize), value);
@@ -742,9 +746,13 @@ export function App() {
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    const tools: Record<string, EditTool> = { b: "paint", p: "paint", e: "erase", g: "fill", r: "replace", i: "pick" };
+    const tools: Record<string, EditTool> = { b: "paint", p: "paint", e: "erase", r: "replace", i: "pick" };
     if (tools[key]) setTool(tools[key]);
-    else if (key === "[" || key === "]") {
+    else if (key === "g") {
+      // Fill is a brush size: it works with paint and erase.
+      setBrushSize("fill");
+      if (tool !== "paint" && tool !== "erase") setTool("paint");
+    } else if (key === "[" || key === "]") {
       const i = BRUSH_SIZES.indexOf(brushSize) + (key === "]" ? 1 : -1);
       setBrushSize(BRUSH_SIZES[Math.max(0, Math.min(BRUSH_SIZES.length - 1, i))]!);
     } else if (key === "escape" && !fullscreen) setTool(null);

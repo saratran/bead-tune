@@ -36,18 +36,39 @@ export function DisplayControls({
   );
 }
 
-const TOOL_LABELS: Record<EditTool, string> = { paint: "Paint", erase: "Erase", fill: "Fill", replace: "Replace", pick: "Pick colour" };
+const TOOL_LABELS: Record<EditTool, string> = { paint: "Paint", erase: "Erase", replace: "Replace", pick: "Pick colour" };
 
 /** Keyboard shortcut for each tool (shown on hover; handled in the app). */
-export const TOOL_KEYS: Record<EditTool, string> = { paint: "B", erase: "E", fill: "G", replace: "R", pick: "I" };
+export const TOOL_KEYS: Record<EditTool, string> = { paint: "B", erase: "E", replace: "R", pick: "I" };
 
 const TOOL_HINTS: Record<EditTool, string> = {
   paint: "Paint beads with the brush colour",
   erase: "Remove beads",
-  fill: "Fill a connected area of one colour",
   replace: "Replace every bead of a colour",
   pick: "Pick a colour from the pattern (or Alt-click with any tool)",
 };
+
+/** Small line icons (16 × 16, currentColor). */
+const ICON_PATHS: Record<EditTool | "fill", string> = {
+  // Brush: handle and bristles.
+  paint: "M11 2.5 13.5 5 7.5 11 5 8.5ZM4.3 9.6l2.1 2.1c-.4 1.6-1.7 2.3-3.9 2.3.1-2.1.7-3.4 1.8-4.4Z",
+  // Eraser: tilted block on a baseline.
+  erase: "M9.6 2.8 13.2 6.4 7.6 12H4.7L2.8 10.1ZM6.2 6.2l3.6 3.6M7.6 12H13.5",
+  // Replace: two arrows swapping.
+  replace: "M3 5.5h8.5m-2.5-2.5 2.5 2.5L9 8M13 10.5H4.5m2.5 2.5-2.5-2.5L7 8",
+  // Eyedropper.
+  pick: "M10.4 2.6a1.9 1.9 0 0 1 2.7 2.7l-1.4 1.4.7.7-1 1-3.8-3.8 1-1 .7.7ZM8.6 6.4 4 11v1.9h1.9l4.6-4.6",
+  // Paint bucket with a drip.
+  fill: "M7.6 2.5 12.8 7.7 8 12.5 2.8 7.3ZM2.8 7.3h10M13.5 10.2c.7 1 1 1.6 1 2.1a1 1 0 0 1-2 0c0-.5.3-1.1 1-2.1Z",
+};
+
+export function ToolIcon({ name }: { name: EditTool | "fill" }) {
+  return (
+    <svg className="tool-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d={ICON_PATHS[name]} />
+    </svg>
+  );
+}
 
 /** Paint / erase / fill / replace / pick, brush colour and size, undo/redo and clear. */
 export function EditBar({
@@ -69,7 +90,7 @@ export function EditBar({
   onTool: (t: EditTool) => void;
   brush: BeadColor | null;
   onChooseBrush: () => void;
-  brushSize?: number;
+  brushSize?: BrushSize;
   onBrushSize?: (size: BrushSize) => void;
   canUndo: boolean;
   onUndo: () => void;
@@ -86,8 +107,9 @@ export function EditBar({
   return (
     <div className="edit-bar">
       <div className="segmented" role="radiogroup" aria-label="Edit tool">
-        {(["paint", "erase", "fill", "replace", "pick"] as const).map((t) => (
-          <button key={t} role="radio" aria-checked={tool === t} className={tool === t ? "on" : ""} onClick={() => onTool(t)} title={`${TOOL_HINTS[t]} (${TOOL_KEYS[t]})`}>
+        {(["paint", "erase", "replace", "pick"] as const).map((t) => (
+          <button key={t} role="radio" aria-checked={tool === t} className={`with-icon ${tool === t ? "on" : ""}`} onClick={() => onTool(t)} title={`${TOOL_HINTS[t]} (${TOOL_KEYS[t]})`}>
+            <ToolIcon name={t} />
             {TOOL_LABELS[t]}
           </button>
         ))}
@@ -98,11 +120,25 @@ export function EditBar({
       </button>
       {onBrushSize && (tool === "paint" || tool === "erase") && (
         <div className="segmented brush-size" role="radiogroup" aria-label="Brush size" title="Brush size ([ and ] to change)">
-          {BRUSH_SIZES.map((n) => (
-            <button key={n} role="radio" aria-checked={brushSize === n} className={brushSize === n ? "on" : ""} onClick={() => onBrushSize(n)}>
-              {n}
-            </button>
-          ))}
+          {BRUSH_SIZES.map((n) =>
+            n === "fill" ? (
+              <button
+                key={n}
+                role="radio"
+                aria-checked={brushSize === n}
+                className={`with-icon ${brushSize === n ? "on" : ""}`}
+                onClick={() => onBrushSize(n)}
+                title={`${tool === "erase" ? "Clear" : "Fill"} a connected area of one colour (G)`}
+              >
+                <ToolIcon name="fill" />
+                Fill
+              </button>
+            ) : (
+              <button key={n} role="radio" aria-checked={brushSize === n} className={brushSize === n ? "on" : ""} onClick={() => onBrushSize(n)}>
+                {n}
+              </button>
+            ),
+          )}
         </div>
       )}
       <button className="btn btn-ghost" disabled={!canUndo} onClick={onUndo} title="Undo (⌘/Ctrl+Z)">
@@ -133,7 +169,7 @@ export function EditBar({
       <details className="shortcuts">
         <summary>Shortcuts</summary>
         <p className="hint">
-          B paint · E erase · G fill · R replace · I pick · [ ] brush size · Shift-click line · Alt-click pick · ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z redo · Esc done
+          B paint · E erase · R replace · I pick · G fill size · [ ] brush size · Shift-click line · Alt-click pick · ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z redo · Esc done
         </p>
       </details>
     </div>

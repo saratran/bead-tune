@@ -1,8 +1,8 @@
 /** Geometry for the bead editor: brush footprints, straight lines, fills. All in cell indices. */
 import type { Pattern } from "./pattern";
 
-/** Brush sizes offered (beads across; the brush is a square). */
-export const BRUSH_SIZES = [1, 2, 3, 5] as const;
+/** Brush sizes offered: beads across (a square), or "fill" — a connected area of one colour. */
+export const BRUSH_SIZES = [1, 2, 3, 5, "fill"] as const;
 export type BrushSize = (typeof BRUSH_SIZES)[number];
 
 /** Cells covered by a `size` × `size` brush at `index` (centred; even sizes lean up-left). */

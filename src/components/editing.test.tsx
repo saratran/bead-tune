@@ -546,16 +546,26 @@ describe("editing tools in the app", () => {
     await waitFor(() => expect(edited()).toBe(11));
   });
 
-  test("fill and replace take a whole area in one undo step; redo brings it back", async () => {
+  test("Fill is a brush size: clear or fill an area in one undo step; redo brings it back", async () => {
     await editing();
     key("g");
-    expect(screen.getByRole("radio", { name: "Fill" }).getAttribute("aria-checked")).toBe("true");
-    click(40, 10); // the blue half: 26 × 52
+    const sizes = () => screen.getByRole("radiogroup", { name: "Brush size" });
+    expect(within(sizes()).getByRole("radio", { name: "Fill" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "Paint" }).getAttribute("aria-checked")).toBe("true");
+    // Erase + Fill clears the red half (26 × 52) in one go.
+    key("e");
+    expect(within(sizes()).getByRole("radio", { name: "Fill" }).getAttribute("aria-checked")).toBe("true");
+    click(5, 10);
     await waitFor(() => expect(edited()).toBe(26 * 52));
     key("z", { metaKey: true });
     await waitFor(() => expect(edited()).toBe(0));
     key("z", { metaKey: true, shiftKey: true });
     await waitFor(() => expect(edited()).toBe(26 * 52));
+    // Paint + Fill fills the cleared area again with the brush colour.
+    key("b");
+    click(5, 10);
+    await waitFor(() => expect(edited()).toBe(26 * 52));
+    expect(screen.queryByText(/empty peg/) === null).toBe(true);
     key("r");
     expect(screen.getByRole("radio", { name: "Replace" }).getAttribute("aria-checked")).toBe("true");
   });

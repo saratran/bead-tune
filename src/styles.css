@@ -2546,3 +2546,14 @@ button.zoom-level:hover:not(:disabled) {
     max-height: 42dvh;
   }
 }
+
+/* Edit tools: icon + label */
+.segmented button.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tool-icon {
+  flex: none;
+}

@@ -16,8 +16,8 @@ interface Props {
   tool?: EditTool | null;
   /** `mods`: Shift draws a straight line from the last bead; Alt picks a colour instead. */
   onEdit?: (index: number, phase: "start" | "move", mods?: { shift: boolean; alt: boolean }) => void;
-  /** Paint/erase brush size in beads (for the outline under the cursor). */
-  brushSize?: number;
+  /** Paint/erase brush size in beads, or "fill" (for the outline under the cursor). */
+  brushSize?: number | "fill";
   /**
    * Fullscreen viewer: fits the whole pattern, then `zoom` scales it (1 = fit).
    * Drag pans, pinch / Ctrl+wheel call `onZoom` with a scale factor.
@@ -29,7 +29,7 @@ interface Props {
   onZoom?: (factor: number) => void;
 }
 
-export type EditTool = "paint" | "erase" | "fill" | "replace" | "pick";
+export type EditTool = "paint" | "erase" | "replace" | "pick";
 
 /** Tools that paint as you drag (the others act on a single click). */
 const DRAG_TOOLS: EditTool[] = ["paint", "erase"];
@@ -250,7 +250,7 @@ export function PatternView({
         />
         {tool && hover && (() => {
           // Outline of the beads the next click will change.
-          const size = DRAG_TOOLS.includes(tool) ? brushSize : 1;
+          const size = DRAG_TOOLS.includes(tool) && typeof brushSize === "number" ? brushSize : 1;
           const x0 = Math.max(0, hover.x - Math.floor((size - 1) / 2));
           const y0 = Math.max(0, hover.y - Math.floor((size - 1) / 2));
           const x1 = Math.min(pattern.width, hover.x - Math.floor((size - 1) / 2) + size);
@@ -275,9 +275,11 @@ export function PatternView({
           </>
         ) : tool ? (
           {
-            paint: "Click or drag to paint · Shift-click draws a line · Alt-click picks a colour.",
-            erase: "Click or drag to remove beads · Shift-click erases a line.",
-            fill: "Click to fill a connected area of one colour.",
+            paint:
+              brushSize === "fill"
+                ? "Click to fill a connected area of one colour · Alt-click picks a colour."
+                : "Click or drag to paint · Shift-click draws a line · Alt-click picks a colour.",
+            erase: brushSize === "fill" ? "Click to clear a connected area of one colour." : "Click or drag to remove beads · Shift-click erases a line.",
             replace: "Click a colour to replace every bead of it.",
             pick: "Click a bead to use its colour.",
           }[tool]
