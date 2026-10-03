@@ -573,7 +573,7 @@ describe("viewing a result large", () => {
 });
 
 describe("sorting", () => {
-  const m = (colors: number, beads: number, strays: number) => ({ colorError: 1, detailError: 1, keyDetailError: 1, extremeLoss: 0, distanceError: 1, edgeError: 0, featureLoss: 0, noise: 0, toneError: 0, colors, beads, strays, fragmentation: 1 });
+  const m = (colors: number, beads: number, strays: number) => ({ colorError: 1, detailError: 1, keyDetailError: 1, extremeLoss: 0, subtleLoss: 0, distanceError: 1, edgeError: 0, featureLoss: 0, noise: 0, toneError: 0, colors, beads, strays, fragmentation: 1 });
   const items = [
     { id: "a", features: 60, likeness: 90, ease: 20, metrics: m(40, 300, 9) },
     { id: "b", features: 90, likeness: 70, ease: 50, metrics: m(12, 200, 1) },
@@ -704,4 +704,12 @@ describe("scores on one scale", () => {
       expect(updated[k]).toBeLessThanOrEqual(100);
     }
   });
+});
+
+test("re-scoring judges your own settings by the tone their saturation implies", async () => {
+  const candidate = { sampling: "smooth" as const, denoise: false, maxColors: 8, dither: { mode: "none" as const, strength: 0 }, cleanup: 0, metric: "accurate" as const, minBeads: 0, brightness: 0, contrast: 4, saturation: 48 };
+  const mine = { id: "m1", label: "My settings 1", candidate, thumbnail: "data:image/png;base64,AA==", likeness: 0, ease: 0, colors: 8, beads: 144, strays: 2, createdAt: 1, tone: "natural" as const, fixedScale: true, scoreVersion: 1, context: { width: 12, brandId: "mard" } };
+  const { onBookmarksChange } = renderDialog({ initialTab: "results", bookmarks: [mine] });
+  await waitFor(() => expect(onBookmarksChange).toHaveBeenCalled(), { timeout: 5000 });
+  expect(onBookmarksChange.mock.lastCall![0][0]).toMatchObject({ tone: "vivid", scoreVersion: SCORE_VERSION });
 });

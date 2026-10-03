@@ -163,6 +163,12 @@ export interface Metrics {
    * highlights) keep their lightness: mean |ΔL| there, in L units.
    */
   extremeLoss: number;
+  /**
+   * Subtle features lost, 0–1: spots that stand out from their *local* surroundings
+   * (a faint mouth on smooth skin), weighed by how much of that difference the
+   * pattern keeps. The other measures only see the image's strongest details.
+   */
+  subtleLoss: number;
   /** Speckle the original doesn't have: mean extra bead-to-neighbourhood ΔE. */
   noise: number;
   /**
@@ -282,8 +288,18 @@ const MIN_FEATURE_EDGE = 8;
 const DETAIL_SHARE = 0.15;
 /** Share of cells (most detailed first) used for keyDetailError. */
 const KEY_SHARE = 0.03;
+/** |difference| in colour intensity from the tone's target, halved when it goes further the tone's way. */
+function toneOff(diff: number, chroma: number): number {
+  const sameWay = (chroma > 1 && diff > 0) || (chroma < 1 && diff < 0);
+  return Math.abs(diff) * (sameWay ? 0.5 : 1);
+}
+
 /** Share of the darkest and of the brightest cells used for extremeLoss. */
 const EXTREME_SHARE = 0.03;
+/** Subtle features: share of cells checked, neighbourhood radius, and the smallest difference (ΔE) that counts. */
+const SUBTLE_SHARE = 0.04;
+const SUBTLE_RADIUS = 3;
+const SUBTLE_MIN_DE = 3;
 
 export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0, offsetY = 0, chroma = 1): Metrics {
   const { width: w, height: h } = pattern;
@@ -362,6 +378,46 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
   for (const i of lit.slice(-k)) extremeSum += Math.abs(ref.lab[i * 3]! - pat.lab[i * 3]!);
   const extremeLoss = lit.length ? extremeSum / (2 * k) : 0;
 
+  // Subtle features: cells that differ from their blurred surroundings much more than
+  // is usual in their neighbourhood. Busy texture sets a high bar; flat areas a low one.
+  const dev = new Float32Array(w * h).fill(NaN);
+  for (let i = 0; i < w * h; i++) {
+    if (Number.isNaN(cellError[i]!) || Number.isNaN(br.lab[i * 3]!)) continue;
+    dev[i] = Math.sqrt(labDistSq([ref.lab[i * 3]!, ref.lab[i * 3 + 1]!, ref.lab[i * 3 + 2]!], [br.lab[i * 3]!, br.lab[i * 3 + 1]!, br.lab[i * 3 + 2]!]));
+  }
+  const subtle: { i: number; v: number }[] = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (Number.isNaN(dev[i]!) || dev[i]! < SUBTLE_MIN_DE) continue;
+      let sum = 0, n = 0;
+      for (let dy = -SUBTLE_RADIUS; dy <= SUBTLE_RADIUS; dy++) {
+        for (let dx = -SUBTLE_RADIUS; dx <= SUBTLE_RADIUS; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const d = dev[yy * w + xx]!;
+          if (!Number.isNaN(d)) {
+            sum += d;
+            n++;
+          }
+        }
+      }
+      subtle.push({ i, v: dev[i]! / (sum / Math.max(1, n) + 1) });
+    }
+  }
+  subtle.sort((a, b) => b.v - a.v);
+  const subtleCells = subtle.slice(0, Math.max(1, Math.round(w * h * SUBTLE_SHARE)));
+  let kept = 0;
+  for (const { i } of subtleCells) {
+    if (Number.isNaN(pat.lab[i * 3]!) || Number.isNaN(bp.lab[i * 3]!)) continue;
+    // How much of the original's difference from its surroundings the pattern keeps, in the same direction.
+    const dr = [ref.lab[i * 3]! - br.lab[i * 3]!, ref.lab[i * 3 + 1]! - br.lab[i * 3 + 1]!, ref.lab[i * 3 + 2]! - br.lab[i * 3 + 2]!];
+    const dp = [pat.lab[i * 3]! - bp.lab[i * 3]!, pat.lab[i * 3 + 1]! - bp.lab[i * 3 + 1]!, pat.lab[i * 3 + 2]! - bp.lab[i * 3 + 2]!];
+    const len2 = dr[0]! ** 2 + dr[1]! ** 2 + dr[2]! ** 2;
+    kept += Math.min(1, Math.max(0, (dp[0]! * dr[0]! + dp[1]! * dr[1]! + dp[2]! * dr[2]!) / len2));
+  }
+  const subtleLoss = subtleCells.length && subtle.length ? 1 - kept / subtleCells.length : 0;
+
   // Speckle: how far each bead is from its blurred neighbourhood, beyond what the
   // original has at the same spot. Dithering a flat background scores badly here;
   // texture that's really in the original doesn't.
@@ -404,12 +460,14 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
     detailError,
     keyDetailError,
     extremeLoss,
+    subtleLoss,
     distanceError: distN ? distSum / distN : 0,
     edgeError,
     featureLoss,
     noise: noiseN ? noiseSum / noiseN : 0,
     // Relative to the target's intensity, with a floor so near-grey images don't explode it.
-    toneError: compared ? Math.abs(patChroma - refChroma) / compared / Math.max(5, refChroma / compared) : 0,
+    // A vivid target overshot (or a muted one undershot) is still the look asked for, so it costs half.
+    toneError: compared ? toneOff(patChroma - refChroma, chroma) / compared / Math.max(5, refChroma / compared) : 0,
     colors: pattern.colors.length,
     beads: pattern.total,
     strays,
@@ -458,7 +516,7 @@ export function rate(results: { candidate: Candidate; pattern: Pattern; metrics:
     distance: normaliser(m.map((x) => x.distanceError)),
     edge: normaliser(m.map((x) => x.edgeError)),
     noise: normaliser(m.map((x) => x.noise)),
-    featureLoss: normaliser(m.map((x) => x.featureLoss)),
+    featureCost: normaliser(m.map((x) => featureCost(x))),
     tone: normaliser(m.map((x) => x.toneError)),
     // Log scale: going from 12 to 24 colours matters as much as 32 to 64.
     colors: normaliser(m.map((x) => Math.log(x.colors))),
@@ -473,7 +531,8 @@ export function rate(results: { candidate: Candidate; pattern: Pattern; metrics:
     return {
       ...r,
       likeness: Math.round((1 - bad) * 100),
-      features: Math.round((1 - (0.4 * n.featureLoss(x.featureLoss) + 0.35 * n.detail(x.detailError) + 0.25 * n.edge(x.edgeError))) * 100),
+      // Same feature measure as the shown scores (incl. subtle features), spread across this scan.
+      features: Math.round((1 - n.featureCost(featureCost(x))) * 100),
       ease: Math.round((1 - effort) * 100),
       colorLoad: n.colors(Math.log(x.colors)),
     };
@@ -525,6 +584,8 @@ export const MIN_DIFFERENCE = 0.06;
 export const COLOR_PENALTY = 6;
 /** "Balanced" = fewest colours among candidates within this many likeness points of the best. */
 export const BALANCED_WITHIN = 6;
+/** "Most detailed" = most features among candidates within this many likeness points of the best. */
+export const DETAILED_WITHIN = 25;
 
 /**
  * Picks up to `count` varied suggestions: named picks first (most faithful,
@@ -547,6 +608,9 @@ export function suggest(scored: Scored[], count: number): Suggestion[] {
   const top = Math.max(...scored.map((s) => s.likeness));
   const close = scored.filter((s) => s.likeness >= top - BALANCED_WITHIN);
   add(best(close, (s) => -s.colorLoad * 100 + s.likeness * 0.1 + s.ease * 0.05), "Balanced", "Nearly as faithful, with fewer colours");
+  // Keeps the most detail (faint features included), as long as it still looks like the picture.
+  const recognisable = scored.filter((s) => s.likeness >= top - DETAILED_WITHIN);
+  add(best(recognisable, (s) => s.features - 2 * COLOR_PENALTY * s.colorLoad), "Most detailed", "Keeps the most detail, even faint features — colours may be bolder");
   add(best(decent.length ? decent : scored, (s) => s.ease + s.likeness * 0.25), "Simplest", "Fewest colours and stray beads");
   add(best(scored.filter((s) => s.candidate.dither.mode !== "none"), (s) => s.likeness - COLOR_PENALTY * s.colorLoad), "Smooth shading", "Dithering blends colours across gradients");
   add(best(scored.filter((s) => s.candidate.sampling === "sharp" && s.candidate.dither.mode === "none"), (s) => s.likeness - COLOR_PENALTY * s.colorLoad), "Crisp", "Clean edges, no blending");
@@ -703,11 +767,13 @@ export async function scan(
  * heavy clean-up). Ease runs the other way: the crude version is 100.
  * Bump SCORE_VERSION when this scale changes, so stored bookmarks are re-scored.
  */
-export const SCORE_VERSION = 2;
+export const SCORE_VERSION = 3;
 
 export interface Anchors {
   best: Metrics;
   crude: Metrics;
+  /** Lowest feature cost among the full-colour references (boosting can keep more detail). */
+  bestFeatures?: number;
 }
 
 export interface Scores {
@@ -716,28 +782,42 @@ export interface Scores {
   ease: number;
 }
 
-/** The two reference settings for a tone (vivid/muted anchors lean the same way). */
-export function anchorCandidates(tone: Tone = "natural"): { best: Candidate; crude: Candidate } {
+/**
+ * The reference settings for a tone (vivid/muted ones lean the same way): best and
+ * crude, plus boosted full-colour versions — more saturation and contrast push faint
+ * details onto different beads, so they can keep more features than the plain best.
+ */
+export function anchorCandidates(tone: Tone = "natural"): { best: Candidate; crude: Candidate; boosted: Candidate[] } {
   const saturation = TONE_SATURATION[tone][0] ?? 0;
   const plain = { sampling: "smooth" as const, denoise: false, dither: { mode: "none" as const, strength: 0 }, minBeads: 0, brightness: 0, contrast: 0, saturation };
+  const best: Candidate = { ...plain, maxColors: 120, cleanup: 0, metric: "accurate" };
   return {
-    best: { ...plain, maxColors: 120, cleanup: 0, metric: "accurate" },
+    best,
     crude: { ...plain, maxColors: 6, cleanup: 3, metric: "standard" },
+    boosted: [
+      { ...best, contrast: 10, saturation: saturation + 25 },
+      { ...best, contrast: 10, saturation: saturation + 50 },
+    ],
   };
+}
+
+function toAnchors(best: Evaluated | null | undefined, crude: Evaluated | null | undefined, boosted: (Evaluated | null | undefined)[]): Anchors | null {
+  if (!best || !crude) return null;
+  const features = [best, ...boosted].filter((e): e is Evaluated => !!e).map((e) => featureCost(e.metrics));
+  return { best: best.metrics, crude: crude.metrics, bestFeatures: Math.min(...features) };
 }
 
 /** Scores the anchors with `evaluate` (null if the image gives an empty pattern). */
 export async function anchorsFor(evaluate: EvaluateMany, tone: Tone = "natural", signal?: AbortSignal): Promise<Anchors | null> {
-  const { best, crude } = anchorCandidates(tone);
-  const [b, c] = await evaluate([best, crude], undefined, signal);
-  return b && c ? { best: b.metrics, crude: c.metrics } : null;
+  const { best, crude, boosted } = anchorCandidates(tone);
+  const [b, c, ...rest] = await evaluate([best, crude, ...boosted], undefined, signal);
+  return toAnchors(b, c, rest);
 }
 
 /** As anchorsFor, for a one-at-a-time evaluator. */
 export function anchorsSync(evaluate: (c: Candidate) => Evaluated | null, tone: Tone = "natural"): Anchors | null {
-  const { best, crude } = anchorCandidates(tone);
-  const b = evaluate(best), c = evaluate(crude);
-  return b && c ? { best: b.metrics, crude: c.metrics } : null;
+  const { best, crude, boosted } = anchorCandidates(tone);
+  return toAnchors(evaluate(best), evaluate(crude), boosted.map(evaluate));
 }
 
 /** 0–100 between the anchors: `good` scores 100, `bad` 0; clamped. */
@@ -749,7 +829,7 @@ function between(value: number, good: number, bad: number): number {
 
 export function absoluteScores(m: Metrics, a: Anchors): Scores {
   return {
-    features: between(featureCost(m), featureCost(a.best), featureCost(a.crude)),
+    features: between(featureCost(m), a.bestFeatures ?? featureCost(a.best), featureCost(a.crude)),
     likeness: between(likenessCost(m), likenessCost(a.best), likenessCost(a.crude)),
     ease: between(effortCost(m), effortCost(a.crude), effortCost(a.best)),
   };
@@ -788,12 +868,15 @@ export function likenessCost(m: Metrics): number {
 /** 0 ≈ every outline and fine feature kept; ~1 ≈ most lost. */
 export function featureCost(m: Metrics): number {
   return (
-    0.25 * (m.detailError / 10) +
-    0.25 * (m.featureLoss / 0.15) +
-    0.2 * (m.edgeError / 0.15) +
+    0.2 * (m.detailError / 10) +
+    // Strong edges kept; lighter weight, since boosting contrast flatters it.
+    0.12 * (m.featureLoss / 0.15) +
+    0.13 * (m.edgeError / 0.15) +
     // Small, telling details (eyes, pupils, sparkles) that the broader measures average away.
-    0.15 * (m.keyDetailError / 15) +
-    0.15 * (m.extremeLoss / 6)
+    0.1 * (m.keyDetailError / 15) +
+    0.1 * (m.extremeLoss / 6) +
+    // Faint features in calm areas (a mouth on smooth skin) — what people notice missing.
+    0.35 * (m.subtleLoss / 0.15)
   );
 }
 
@@ -817,7 +900,7 @@ export function featureToleranceFor(label: string): number | undefined {
 }
 
 export function likenessToleranceFor(label: string): number {
-  return label === "Simplest" ? 0.04 : 0.03;
+  return label === "Simplest" ? 0.04 : label === "Most detailed" ? 0.12 : 0.03;
 }
 
 /**
@@ -832,6 +915,10 @@ export function objectiveFor(label: string): (m: Metrics) => number {
       return (m) => featureCost(m) + 0.3 * likenessCost(m) + 0.35 * effortCost(m);
     case "Alternative":
       return (m) => featureCost(m) + 0.3 * likenessCost(m) + 0.2 * effortCost(m);
+    case "Most detailed":
+      // Details first; likeness only as a tie-breaker (its tolerance keeps it recognisable).
+      // Colours count too: detail usually comes from bolder colours, not from more of them.
+      return (m) => featureCost(m) + 0.15 * likenessCost(m) + 0.3 * colorCost(m);
     default: // Most faithful, Smooth shading, Crisp, and tuning from preferences
       return (m) => featureCost(m) + 0.5 * likenessCost(m) + 0.05 * colorCost(m);
   }

@@ -5,6 +5,7 @@ import {
   autoSuggest,
   candidateSettings,
   SCORE_VERSION,
+  toneForSaturation,
   localEngine,
   type AutoEngine,
   countCombinations,
@@ -474,14 +475,16 @@ export function AutoDialog({
     void (async () => {
       const engine = await getEngine();
       const updated = new Map<string, Partial<Bookmark>>();
-      for (const tone of new Set(stale.map((b) => b.tone ?? "natural"))) {
+      // Your own settings are judged by the tone their saturation implies; suggestions keep theirs.
+      const toneOf = (b: Bookmark): Tone => (b.fixedScale ? toneForSaturation(b.candidate.saturation) : (b.tone ?? "natural"));
+      for (const tone of new Set(stale.map(toneOf))) {
         const evaluate = engine.forTone(tone);
         const anchors = await anchorsFor(evaluate, tone);
-        const group = stale.filter((b) => (b.tone ?? "natural") === tone);
+        const group = stale.filter((b) => toneOf(b) === tone);
         const results = await evaluate(group.map((b) => b.candidate));
         group.forEach((b, i) => {
           const r = results[i];
-          if (r && anchors) updated.set(b.id, { ...absoluteScores(r.metrics, anchors), scoreVersion: SCORE_VERSION });
+          if (r && anchors) updated.set(b.id, { ...absoluteScores(r.metrics, anchors), tone, scoreVersion: SCORE_VERSION });
         });
       }
       rescoring.current = false;
