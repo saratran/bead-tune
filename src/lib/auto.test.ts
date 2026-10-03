@@ -126,7 +126,7 @@ describe("scorePattern", () => {
 });
 
 describe("rate and suggest", () => {
-  const m = (over: Partial<Metrics>): Metrics => ({ colorError: 5, detailError: 5, distanceError: 5, edgeError: 0.1, featureLoss: 0.2, noise: 1, toneError: 0.05, colors: 20, beads: 100, strays: 10, fragmentation: 10, ...over });
+  const m = (over: Partial<Metrics>): Metrics => ({ colorError: 5, detailError: 5, keyDetailError: 8, extremeLoss: 3, distanceError: 5, edgeError: 0.1, featureLoss: 0.2, noise: 1, toneError: 0.05, colors: 20, beads: 100, strays: 10, fragmentation: 10, ...over });
   const cand = (over: Partial<Candidate>): Candidate => ({ ...enumerateCandidates(tiny)[0]!, ...over });
   // Distinct patterns so suggestions aren't treated as duplicates.
   const pat = (seed: number) => makePattern(Array.from({ length: 4 }, (_, y) => Array.from({ length: 4 }, (_, x) => ((x + y + seed) % 3 === 0 ? "a" : "b")).join("")));
@@ -268,8 +268,8 @@ describe("refinement", () => {
 });
 
 test("fixed costs: lower is better and in sensible ranges", () => {
-  const good: Metrics = { colorError: 3, detailError: 4, distanceError: 2, edgeError: 0.03, featureLoss: 0.05, noise: 0.5, toneError: 0.02, colors: 12, beads: 1000, strays: 10, fragmentation: 5 };
-  const bad: Metrics = { colorError: 12, detailError: 15, distanceError: 9, edgeError: 0.2, featureLoss: 0.6, noise: 5, toneError: 0.5, colors: 100, beads: 1000, strays: 400, fragmentation: 50 };
+  const good: Metrics = { colorError: 3, detailError: 4, keyDetailError: 6, extremeLoss: 1, distanceError: 2, edgeError: 0.03, featureLoss: 0.05, noise: 0.5, toneError: 0.02, colors: 12, beads: 1000, strays: 10, fragmentation: 5 };
+  const bad: Metrics = { colorError: 12, detailError: 15, keyDetailError: 25, extremeLoss: 12, distanceError: 9, edgeError: 0.2, featureLoss: 0.6, noise: 5, toneError: 0.5, colors: 100, beads: 1000, strays: 400, fragmentation: 50 };
   expect(likenessCost(good)).toBeLessThan(likenessCost(bad));
   expect(effortCost(good)).toBeLessThan(effortCost(bad));
   expect(colorCost({ ...good, colors: 2 })).toBeCloseTo(0);
@@ -292,9 +292,11 @@ describe("features", () => {
   });
 
   test("featureCost grows with lost features, detail error and edge error", () => {
-    const base: Metrics = { colorError: 5, detailError: 5, distanceError: 5, edgeError: 0.05, featureLoss: 0.05, noise: 1, toneError: 0.05, colors: 20, beads: 100, strays: 5, fragmentation: 10 };
+    const base: Metrics = { colorError: 5, detailError: 5, keyDetailError: 8, extremeLoss: 3, distanceError: 5, edgeError: 0.05, featureLoss: 0.05, noise: 1, toneError: 0.05, colors: 20, beads: 100, strays: 5, fragmentation: 10 };
     expect(featureCost({ ...base, featureLoss: 0.2 })).toBeGreaterThan(featureCost(base));
     expect(featureCost({ ...base, detailError: 9 })).toBeGreaterThan(featureCost(base));
+    expect(featureCost({ ...base, keyDetailError: 20 })).toBeGreaterThan(featureCost(base));
+    expect(featureCost({ ...base, extremeLoss: 10 })).toBeGreaterThan(featureCost(base));
     expect(featureCost({ ...base, edgeError: 0.15 })).toBeGreaterThan(featureCost(base));
   });
 });

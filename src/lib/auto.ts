@@ -154,6 +154,13 @@ export interface Metrics {
   edgeError: number;
   /** How much of the original's strongest edges (outlines, features) the pattern lost, 0–1. */
   featureLoss: number;
+  /** Mean ΔE2000 on the very most distinctive cells (top few %): eyes, pupils, small marks. */
+  keyDetailError: number;
+  /**
+   * How well the original's darkest and brightest spots (outlines, pupils, sparkles,
+   * highlights) keep their lightness: mean |ΔL| there, in L units.
+   */
+  extremeLoss: number;
   /** Speckle the original doesn't have: mean extra bead-to-neighbourhood ΔE. */
   noise: number;
   /**
@@ -271,6 +278,10 @@ const MIN_FEATURE_EDGE = 8;
 
 /** Share of cells (most detailed first) used for detailError. */
 const DETAIL_SHARE = 0.15;
+/** Share of cells (most detailed first) used for keyDetailError. */
+const KEY_SHARE = 0.03;
+/** Share of the darkest and of the brightest cells used for extremeLoss. */
+const EXTREME_SHARE = 0.03;
 
 export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0, offsetY = 0, chroma = 1): Metrics {
   const { width: w, height: h } = pattern;
@@ -334,6 +345,20 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
   saliency.sort((a, b) => b.v - a.v);
   const detailCells = saliency.slice(0, Math.max(1, Math.round(saliency.length * DETAIL_SHARE)));
   const detailError = saliency.length ? detailCells.reduce((sum, c) => sum + cellError[c.i]!, 0) / detailCells.length : 0;
+  const keyCells = saliency.slice(0, Math.max(1, Math.round(saliency.length * KEY_SHARE)));
+  const keyDetailError = saliency.length ? keyCells.reduce((sum, c) => sum + cellError[c.i]!, 0) / keyCells.length : 0;
+
+  // Extremes: the darkest and brightest few % of the original should stay as dark / bright.
+  // Pulled towards the middle counts fully; pushed further out (crushed to black, blown
+  // to white, as contrast boosts do) counts too, so adjustments can't game it.
+  const lit: number[] = [];
+  for (let i = 0; i < w * h; i++) if (!Number.isNaN(cellError[i]!)) lit.push(i);
+  lit.sort((a, b) => ref.lab[a * 3]! - ref.lab[b * 3]!);
+  const k = Math.max(1, Math.round(lit.length * EXTREME_SHARE));
+  let extremeSum = 0;
+  for (const i of lit.slice(0, k)) extremeSum += Math.abs(pat.lab[i * 3]! - ref.lab[i * 3]!);
+  for (const i of lit.slice(-k)) extremeSum += Math.abs(ref.lab[i * 3]! - pat.lab[i * 3]!);
+  const extremeLoss = lit.length ? extremeSum / (2 * k) : 0;
 
   // Speckle: how far each bead is from its blurred neighbourhood, beyond what the
   // original has at the same spot. Dithering a flat background scores badly here;
@@ -375,6 +400,8 @@ export function scorePattern(pattern: Pattern, reference: ImageData, offsetX = 0
   return {
     colorError: compared ? colorSum / compared : 0,
     detailError,
+    keyDetailError,
+    extremeLoss,
     distanceError: distN ? distSum / distN : 0,
     edgeError,
     featureLoss,
@@ -686,7 +713,14 @@ export function likenessCost(m: Metrics): number {
 
 /** 0 ≈ every outline and fine feature kept; ~1 ≈ most lost. */
 export function featureCost(m: Metrics): number {
-  return 0.35 * (m.detailError / 10) + 0.35 * (m.featureLoss / 0.15) + 0.3 * (m.edgeError / 0.15);
+  return (
+    0.25 * (m.detailError / 10) +
+    0.25 * (m.featureLoss / 0.15) +
+    0.2 * (m.edgeError / 0.15) +
+    // Small, telling details (eyes, pupils, sparkles) that the broader measures average away.
+    0.15 * (m.keyDetailError / 15) +
+    0.15 * (m.extremeLoss / 6)
+  );
 }
 
 /** Colour count on a log scale: 0 at 2 colours, 1 at 120. */
@@ -703,6 +737,11 @@ export function effortCost(m: Metrics): number {
  * How much worse (as a fraction) refinement may make a suggestion's likeness
  * while improving its own goal. Keeps "Simplest" from collapsing to 3 colours.
  */
+/** How much of its features refinement may give up while making a suggestion simpler. */
+export function featureToleranceFor(label: string): number | undefined {
+  return label === "Simplest" ? 0.05 : undefined;
+}
+
 export function likenessToleranceFor(label: string): number {
   return label === "Simplest" ? 0.04 : 0.03;
 }
@@ -734,6 +773,8 @@ export interface RefineOptions {
   seed?: number;
   /** Max fractional loss of likeness allowed versus the starting point (default 3%). */
   likenessTolerance?: number;
+  /** Max fractional loss of features (featureCost) allowed versus the starting point (default: no limit). */
+  featureTolerance?: number;
   /** If set, results must not be harder to make than this (effortCost). */
   maxEffortCost?: number;
 }
@@ -803,9 +844,10 @@ export async function refine(
   const dims = DIMS.filter((d) => d.key !== "ditherStrength" || start.candidate.dither.mode !== "none");
   const tried: Evaluated[] = [];
   const maxLikenessCost = likenessCost(start.metrics) * (1 + (opts.likenessTolerance ?? 0.03));
+  const maxFeatureCost = featureCost(start.metrics) * (1 + (opts.featureTolerance ?? Infinity));
   // Out-of-bounds results count as infinitely bad.
   const maxEffort = opts.maxEffortCost ?? Infinity;
-  const cost = (m: Metrics) => (likenessCost(m) > maxLikenessCost || effortCost(m) > maxEffort ? Infinity : objective(m));
+  const cost = (m: Metrics) => (likenessCost(m) > maxLikenessCost || featureCost(m) > maxFeatureCost || effortCost(m) > maxEffort ? Infinity : objective(m));
   let best = start;
   let bestCost = cost(start.metrics);
   let spent = 0;
@@ -941,7 +983,7 @@ export async function autoSuggest(
             evaluate,
             pick,
             objectiveFor(pick.label),
-            { likenessTolerance: likenessToleranceFor(pick.label), ...refineOpts, seed: (refineOpts.seed ?? 1) + n },
+            { likenessTolerance: likenessToleranceFor(pick.label), featureTolerance: featureToleranceFor(pick.label), ...refineOpts, seed: (refineOpts.seed ?? 1) + n },
             signal,
             () => onProgress?.({ phase: "refine", done: ++refineDone, total: refineTotal }),
           ),
@@ -1056,7 +1098,7 @@ export async function tuneFromPreferences(
     // "Simpler" starts from the pick itself, so it runs alongside the main tuning.
     const [tuned, easy] = await Promise.all([
       refine(evaluate, best, objective, { ...options.refine, seed: seedOf(0), maxEffortCost, likenessTolerance: 0.03 }, signal, step),
-      refine(evaluate, start, simpler, { ...options.refine, budget: sideBudget, seed: seedOf(1), likenessTolerance: 0.08 }, signal, step),
+      refine(evaluate, start, simpler, { ...options.refine, budget: sideBudget, seed: seedOf(1), likenessTolerance: 0.08, featureTolerance: 0.08 }, signal, step),
     ]);
     mine.push(...tuned.tried, ...easy.tried);
     const out: Variation[] = [{ label: `Tuned: ${name}`, reason: "Your pick, adjusted to keep more of the original's features", from: seed.candidate, best: tuned.best, tone }];

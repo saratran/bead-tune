@@ -22,8 +22,12 @@ function neighbours4(i: number, w: number, h: number): number[] {
  * Removes speckle: every connected group of at most `maxSize` same-coloured
  * cells (empty counts as a colour) takes the most common colour around it.
  * Lone beads in the background disappear and pinholes in solid areas fill in.
+ *
+ * With `keepContrast`, a group at least that much darker or lighter (Lab L) than
+ * the colour that would replace it is kept: at bead scale an eye, a pupil or a
+ * sparkle is often a single bead, and it isn't noise.
  */
-export function removeStrays(p: Pattern, maxSize: number): Pattern {
+export function removeStrays(p: Pattern, maxSize: number, keepContrast = Infinity): Pattern {
   if (maxSize < 1) return p;
   const { width: w, height: h } = p;
   const { raw, palette } = editable(p);
@@ -70,7 +74,9 @@ export function removeStrays(p: Pattern, maxSize: number): Pattern {
         bestCount = n;
       }
     }
-    if (best !== undefined) for (const i of group) raw[i] = best;
+    if (best === undefined) continue;
+    if (value >= 0 && best >= 0 && Math.abs(palette[value]!.lab[0] - palette[best]!.lab[0]) >= keepContrast) continue;
+    for (const i of group) raw[i] = best;
   }
   return fromIndices(w, h, raw, palette);
 }

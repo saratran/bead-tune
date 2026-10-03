@@ -185,7 +185,7 @@ function makeMatcher(palette: BeadColor[], allowed: number[], distance: (a: Lab,
  * pixels would be cheapest to repaint with their nearest remaining colour.
  * This keeps small-but-distinct details (eyes, outlines) better than top-N by count.
  */
-function reducePalette(palette: BeadColor[], counts: number[], max: number, distance: (a: Lab, b: Lab) => number): number[] {
+function reducePalette(palette: BeadColor[], counts: number[], max: number, distance: (a: Lab, b: Lab) => number, protect: ReadonlySet<number> = new Set()): number[] {
   const kept = counts.map((c, i) => (c > 0 ? i : -1)).filter((i) => i >= 0);
   const weight = [...counts];
   while (kept.length > max) {
@@ -194,6 +194,7 @@ function reducePalette(palette: BeadColor[], counts: number[], max: number, dist
     let worstTarget = -1;
     for (let a = 0; a < kept.length; a++) {
       const ia = kept[a]!;
+      if (protect.has(ia) && kept.length > protect.size) continue;
       let nearest = -1;
       let nd = Infinity;
       for (let b = 0; b < kept.length; b++) {
@@ -289,6 +290,69 @@ function usageOf(raw: Int16Array, size: number): number[] {
   return usage;
 }
 
+/** Share of the darkest and of the brightest pixels whose bead colours reduction keeps. */
+const EXTREME_SHARE = 0.005;
+
+/** sRGB channel value (0–255) → linear light, for quick luminance. */
+const LINEAR = Array.from({ length: 256 }, (_, v) => {
+  const c = v / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+});
+const LUMA_BINS = 1024;
+
+/**
+ * The used palette entries closest to the average colour of the darkest and of the
+ * brightest pixels. Luminance via a lookup table and a histogram keeps this cheap.
+ */
+function extremeColors(rgb: Float32Array, mask: Uint8Array, palette: BeadColor[], usage: number[], distance: (a: Lab, b: Lab) => number): Set<number> {
+  const n = mask.length;
+  const bin = new Uint16Array(n);
+  const hist = new Uint32Array(LUMA_BINS);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    if (mask[i]) continue;
+    const y = 0.2126 * LINEAR[clamp(rgb[i * 3]!) | 0]! + 0.7152 * LINEAR[clamp(rgb[i * 3 + 1]!) | 0]! + 0.0722 * LINEAR[clamp(rgb[i * 3 + 2]!) | 0]!;
+    const b = Math.min(LUMA_BINS - 1, Math.floor(Math.sqrt(y) * LUMA_BINS)); // sqrt spreads the darks out
+    bin[i] = b;
+    hist[b]!++;
+    total++;
+  }
+  const out = new Set<number>();
+  if (!total) return out;
+  const k = Math.max(1, Math.round(total * EXTREME_SHARE));
+  // Bin thresholds holding at least k pixels from each end.
+  let lo = 0;
+  for (let acc = 0; lo < LUMA_BINS && (acc += hist[lo]!) < k; lo++);
+  let hi = LUMA_BINS - 1;
+  for (let acc = 0; hi > 0 && (acc += hist[hi]!) < k; hi--);
+  const sums = [new Float64Array(4), new Float64Array(4)];
+  for (let i = 0; i < n; i++) {
+    if (mask[i]) continue;
+    const which = bin[i]! <= lo ? 0 : bin[i]! >= hi ? 1 : -1;
+    if (which < 0) continue;
+    const sum = sums[which]!;
+    sum[0]! += rgb[i * 3]!;
+    sum[1]! += rgb[i * 3 + 1]!;
+    sum[2]! += rgb[i * 3 + 2]!;
+    sum[3]!++;
+  }
+  for (const sum of sums) {
+    if (!sum[3]) continue;
+    const target = rgbToLab(clamp(sum[0]! / sum[3]!), clamp(sum[1]! / sum[3]!), clamp(sum[2]! / sum[3]!));
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < palette.length; i++) {
+      if (!usage[i]) continue;
+      const d = distance(target, palette[i]!.lab);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best >= 0) out.add(best);
+  }
+  return out;
+}
+
 export function generatePattern(image: ImageData, opts: PatternOptions): Pattern {
   const { width: w, height: h } = image;
   const palette = opts.palette;
@@ -306,7 +370,10 @@ export function generatePattern(image: ImageData, opts: PatternOptions): Pattern
     map(palette.map((_, i) => i)),
     palette.length,
   );
-  let chosen = reducePalette(palette, usage, Math.max(1, opts.maxColors), distance);
+  // With a few colours to spare, keep the beads for the image's darkest and brightest
+  // spots (pupils, outlines, sparkles): they're few pixels but define the picture.
+  const protect = opts.maxColors >= 4 ? extremeColors(rgb, mask, palette, usage, distance) : new Set<number>();
+  let chosen = reducePalette(palette, usage, Math.max(1, opts.maxColors), distance, protect);
   if (chosen.length === 0) chosen = [0];
 
   // Pass 2: map onto the reduced palette, then drop rarely used colours and

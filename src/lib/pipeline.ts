@@ -1,9 +1,16 @@
 /** The full image → bead pattern pipeline, in order. */
+
 import { addOutline, contentBox, padPattern, removeStrays, trimPattern } from "./cleanup";
 import { composeCrop, cropImageData } from "./crop";
 import type { BeadColor } from "./palettes";
 import { detectBackground, generatePattern, type Pattern, type PatternOptions } from "./pattern";
 import { detectPixelGrid, FULL_CROP, pixelArtGrid, sampleGrid, type Crop, type ImageSource, type PixelGrid, type SamplingMode } from "./sampling";
+
+/**
+ * Clean-up keeps lone beads at least this much darker or lighter (Lab L) than their
+ * surroundings: eyes, pupils and sparkles rather than speckle. Tuned on illustrations.
+ */
+export const KEEP_CONTRAST = 30;
 
 export interface PipelineSettings {
   /** Target width in beads (ignored for detected pixel art, which keeps its own size). */
@@ -108,7 +115,7 @@ export function buildPattern(source: ImageSource, s: PipelineSettings): Pipeline
     result.sampled = sampled;
   }
 
-  if (s.cleanup > 0) pattern = removeStrays(pattern, s.cleanup);
+  if (s.cleanup > 0) pattern = removeStrays(pattern, s.cleanup, KEEP_CONTRAST);
   if (s.outline || s.reserveOutline) {
     pattern = padPattern(pattern, 1);
     if (s.outline) pattern = addOutline(pattern, s.outline);

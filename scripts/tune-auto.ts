@@ -16,6 +16,7 @@ import { DEFAULT_PATTERN_OPTIONS, type Pattern } from "../src/lib/pattern";
 import type { PipelineSettings } from "../src/lib/pipeline";
 import { FULL_CROP, imageDataSource, makeImageData, sampleGrid } from "../src/lib/sampling";
 import { decodeImage } from "./decode";
+import { imageTile, patternTile, writeSheet } from "./sheet";
 
 const args = process.argv.slice(2);
 const flag = (name: string, fallback: string) => {
@@ -140,48 +141,8 @@ if (args.includes("--prefer")) {
   refinedPatterns = suggestions.map((s) => s.pattern);
 }
 
-// ---- contact sheet: reference + suggestions, CELL px per bead, GAP between
-const CELL = Number(flag("cell", "6")), GAP = 12, PER_ROW = Number(flag("cols", "5"));
+// ---- contact sheet: reference + suggestions
 const reference = sampleGrid(source, width, FULL_CROP, "smooth", false);
-const tiles: { w: number; h: number; px: (x: number, y: number) => [number, number, number] }[] = [
-  { w: reference.width, h: reference.height, px: (x, y) => [reference.data[(y * reference.width + x) * 4]!, reference.data[(y * reference.width + x) * 4 + 1]!, reference.data[(y * reference.width + x) * 4 + 2]!] },
-  ...suggestions.map((s, i) => {
-    const p: Pattern = refinedPatterns[i] || s.pattern;
-    return { w: p.width, h: p.height, px: (x: number, y: number): [number, number, number] => {
-      const idx = p.cells[y * p.width + x]!;
-      return idx < 0 ? [255, 255, 255] : p.colors[idx]!.rgb;
-    } };
-  }),
-];
-const tileW = Math.max(...tiles.map((t) => t.w * CELL)), tileH = Math.max(...tiles.map((t) => t.h * CELL));
-const rows = Math.ceil(tiles.length / PER_ROW);
-const sheetW = Math.min(tiles.length, PER_ROW) * (tileW + GAP) + GAP;
-const sheetH = rows * (tileH + GAP) + GAP;
-const stride = Math.ceil((sheetW * 3) / 4) * 4;
-const bmp = new Uint8Array(54 + stride * sheetH);
-const dv = new DataView(bmp.buffer);
-bmp.set([0x42, 0x4d]);
-dv.setUint32(2, bmp.length, true);
-dv.setUint32(10, 54, true);
-dv.setUint32(14, 40, true);
-dv.setInt32(18, sheetW, true);
-dv.setInt32(22, -sheetH, true); // top-down
-dv.setUint16(26, 1, true);
-dv.setUint16(28, 24, true);
-bmp.fill(40, 54); // dark grey background
-tiles.forEach((t, n) => {
-  const ox = GAP + (n % PER_ROW) * (tileW + GAP);
-  const oy = GAP + Math.floor(n / PER_ROW) * (tileH + GAP);
-  for (let y = 0; y < t.h * CELL; y++) {
-    for (let x = 0; x < t.w * CELL; x++) {
-      const [r, g, b] = t.px(Math.floor(x / CELL), Math.floor(y / CELL));
-      const edge = x % CELL === CELL - 1 || y % CELL === CELL - 1;
-      const p = 54 + (y + oy) * stride + (x + ox) * 3;
-      bmp.set(edge ? [b * 0.85, g * 0.85, r * 0.85] : [b, g, r], p);
-    }
-  }
-});
-const sheetBmp = join(outDir, "sheet.bmp");
-await Bun.write(sheetBmp, bmp);
-await $`sips -s format png ${sheetBmp} --out ${join(outDir, "sheet.png")}`.quiet();
-console.log(`\ncontact sheet: ${join(outDir, "sheet.png")} (original, then suggestions 1..${suggestions.length})`);
+const sheetPath = join(outDir, "sheet.png");
+await writeSheet(sheetPath, [imageTile(reference), ...suggestions.map((s, i) => patternTile(refinedPatterns[i] || s.pattern))], Number(flag("cell", "6")), Number(flag("cols", "5")));
+console.log(`\ncontact sheet: ${sheetPath} (original, then suggestions 1..${suggestions.length})`);

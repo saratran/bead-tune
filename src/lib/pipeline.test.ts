@@ -91,12 +91,28 @@ test("outline keeps the requested width and surrounds the subject", () => {
 });
 
 test("cleanup removes speckle", () => {
-  // White with a few single dark pixels at bead resolution.
-  const specks = source(20, 20, (x, y) => ((x * 7 + y * 3) % 23 === 0 ? [30, 30, 30, 255] : WHITE));
+  // White with a few single light-grey pixels at bead resolution.
+  const specks = source(20, 20, (x, y) => ((x * 7 + y * 3) % 23 === 0 ? [200, 200, 200, 255] : WHITE));
   const raw = buildPattern(specks, base).pattern;
   const clean = buildPattern(specks, { ...base, cleanup: 1 }).pattern;
   expect(raw.colors.length).toBe(2);
   expect(clean.colors.length).toBe(1);
+});
+
+test("cleanup keeps lone beads that stand out sharply (an eye, a sparkle)", () => {
+  const dots = source(20, 20, (x, y) => ((x * 7 + y * 3) % 23 === 0 ? [30, 30, 30, 255] : WHITE));
+  const clean = buildPattern(dots, { ...base, cleanup: 1 }).pattern;
+  expect(clean.colors.length).toBe(2);
+});
+
+test("colour reduction keeps the image's darkest colour, even when it's only a few beads", () => {
+  // Mostly a gradient of warm browns, plus two black "eyes".
+  // 2 px per bead: each eye is exactly one bead.
+  const eye = (x: number, y: number) => (x === 12 || x === 13 || x === 26 || x === 27) && (y === 14 || y === 15);
+  const img = source(40, 40, (x, y) => (eye(x, y) ? [5, 5, 5, 255] : [120 + x * 2, 70 + y, 50, 255]));
+  const p = buildPattern(img, { ...base, options: { ...base.options, maxColors: 5 } }).pattern;
+  const darkest = Math.min(...p.colors.map((c) => c.lab[0]));
+  expect(darkest).toBeLessThan(20);
 });
 
 test("noise smoothing removes isolated specks before sampling", () => {

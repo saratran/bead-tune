@@ -31,6 +31,18 @@ describe("removeStrays", () => {
     expect(p.total).toBe(0);
   });
 
+  test("with keepContrast, a lone bead much darker or lighter than its surroundings stays (eyes, sparkles)", () => {
+    const byL = [...mard].sort((x, y) => x.lab[0] - y.lab[0]);
+    const light = byL[byL.length - 1]!, dark = byL[0]!;
+    const near = byL.find((c) => c !== light && light.lab[0] - c.lab[0] < 10)!;
+    // "a" is the first colour given, "b" the second.
+    const eye = makePattern(["aaa", "aba", "aaa"], [light, dark]);
+    expect(rows(removeStrays(eye, 1, 30), [light, dark])).toEqual(["aaa", "aba", "aaa"]); // kept
+    expect(rows(removeStrays(eye, 1), [light, dark])).toEqual(["aaa", "aaa", "aaa"]); // without keepContrast: removed
+    const speck = makePattern(["aaa", "aba", "aaa"], [light, near]);
+    expect(rows(removeStrays(speck, 1, 30), [light, near])).toEqual(["aaa", "aaa", "aaa"]); // low contrast: still speckle
+  });
+
   test("pinholes in a solid area fill in", () => {
     expect(rows(removeStrays(makePattern(["aaa", "a.a", "aaa"]), 1))).toEqual(["aaa", "aaa", "aaa"]);
   });

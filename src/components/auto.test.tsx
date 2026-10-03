@@ -572,7 +572,7 @@ describe("viewing a result large", () => {
 });
 
 describe("sorting", () => {
-  const m = (colors: number, beads: number, strays: number) => ({ colorError: 1, detailError: 1, distanceError: 1, edgeError: 0, featureLoss: 0, noise: 0, toneError: 0, colors, beads, strays, fragmentation: 1 });
+  const m = (colors: number, beads: number, strays: number) => ({ colorError: 1, detailError: 1, keyDetailError: 1, extremeLoss: 0, distanceError: 1, edgeError: 0, featureLoss: 0, noise: 0, toneError: 0, colors, beads, strays, fragmentation: 1 });
   const items = [
     { id: "a", features: 60, likeness: 90, ease: 20, metrics: m(40, 300, 9) },
     { id: "b", features: 90, likeness: 70, ease: 50, metrics: m(12, 200, 1) },
