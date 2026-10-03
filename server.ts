@@ -36,4 +36,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Bead pattern maker running at ${server.url} (projects stored in ${dataDir})`);
+console.log(`BeadTune running at ${server.url} (projects stored in ${dataDir})`);

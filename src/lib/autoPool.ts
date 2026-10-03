@@ -6,7 +6,8 @@ import type { AutoEngine, Candidate, Evaluated, EvaluateMany, Tone } from "./aut
 import type { WorkerReply, WorkerRequest } from "./autoWorker";
 import type { PipelineSettings } from "./pipeline";
 
-export const WORKER_URL = "/auto-worker.js";
+/** Relative, so it works from a sub-path too (e.g. GitHub Pages' /repo-name/). */
+export const WORKER_URL = "./auto-worker.js";
 
 /** Workers to start: all cores but one (for the page), at most 8. */
 export function poolSize(): number {

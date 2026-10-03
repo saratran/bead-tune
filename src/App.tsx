@@ -778,7 +778,7 @@ export function App() {
           <span className="logo" aria-hidden>
             <i /> <i /> <i /> <i />
           </span>
-          <span className="brand-name">Bead Pattern Maker</span>
+          <span className="brand-name">BeadTune</span>
         </div>
         {project && (
           <button className="project-status" title={dirty ? "Unsaved changes" : "Saved"} onClick={() => setProjectsOpen(true)}>
@@ -1036,8 +1036,11 @@ export function App() {
             </>
           ) : (
             <div className="welcome">
+              <p className="welcome-brand">BeadTune</p>
               <h1>Turn any image into a bead pattern</h1>
-              <p className="muted">Pick a photo or drawing, choose your beads and board size, and get a printable pattern with a shopping list.</p>
+              <p className="muted">
+                Pick a photo or drawing and your beads — then let ✨ Auto try hundreds of settings and tune the best ones for you. Get a printable pattern and a shopping list.
+              </p>
               <Dropzone onFile={onFile} />
               <button className="btn btn-ghost" onClick={() => void sampleImage()}>
                 Try a sample image

@@ -52,7 +52,8 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 /** Projects stored by the app's own server (see src/server/projectsApi.ts). */
-export function serverStore(base = ""): ProjectStore {
+/** `base` is relative by default, so a server behind a sub-path works too. */
+export function serverStore(base = "."): ProjectStore {
   const api = (path: string) => `${base}/api/projects${path}`;
   return {
     location: "server",
@@ -99,7 +100,7 @@ export function storeFor(location: ProjectLocation | undefined): ProjectStore {
 }
 
 /** Whether the server's project storage answers (it doesn't when the app is opened as plain files). */
-export async function serverAvailable(base = ""): Promise<boolean> {
+export async function serverAvailable(base = "."): Promise<boolean> {
   try {
     const res = await fetch(`${base}/api/health`, { cache: "no-store" });
     return res.ok && ((await res.json()) as { ok?: boolean }).ok === true;

@@ -46,7 +46,9 @@ function renderDialog(props: Partial<Parameters<typeof AutoDialog>[0]> = {}) {
 
 describe("presets storage", () => {
   test("defaults to the built-in balanced preset", () => {
-    expect(loadLastConfig().space).toEqual(DEFAULT_SEARCH_SPACE);
+    // Natural + vivid, no dithering or clean-up, 12 suggestions, up to 300 combinations, pattern-search fine-tuning.
+    expect(loadLastConfig()).toMatchObject({ space: BUILT_IN_PRESETS[0]!.space, count: 12, limit: 300, tones: ["natural", "vivid"], refine: { enabled: true, method: "pattern", budget: 40 } });
+    expect(BUILT_IN_PRESETS[0]!.space).toMatchObject({ dither: [{ mode: "none", strength: 0 }], cleanup: [0], metric: ["accurate"], maxColors: [12, 24, 40, 64] });
     expect(allPresets().map((p) => p.name)).toEqual(BUILT_IN_PRESETS.map((p) => p.name));
   });
 
@@ -70,11 +72,11 @@ describe("presets storage", () => {
 describe("AutoDialog", () => {
   test("shows the combination count and updates it as values are toggled", () => {
     renderDialog();
-    expect(count()).toStartWith("128 combinations");
+    expect(count()).toStartWith("32 combinations × 2 tones");
     fireEvent.click(chip("Colours", "100"));
-    expect(count()).toStartWith("160 combinations");
+    expect(count()).toStartWith("40 combinations");
     fireEvent.click(chip("Sampling", "Sharp"));
-    expect(count()).toStartWith("80 combinations");
+    expect(count()).toStartWith("20 combinations");
   });
 
   test("the last selected value can't be turned off", () => {
@@ -87,6 +89,9 @@ describe("AutoDialog", () => {
 
   test("warns when only an even spread will be tried, and when both colour matchings double the time", () => {
     renderDialog();
+    fireEvent.click(chip("Colours", "100"));
+    fireEvent.click(chip("Dithering", "Diffusion 60%"));
+    fireEvent.click(chip("Remove stray beads", "1"));
     fireEvent.change(screen.getByLabelText("Try at most"), { target: { value: "100" } });
     expect(count()).toContain("trying an even spread of 100");
     expect(chip("Colour matching", "Accurate").getAttribute("aria-pressed")).toBe("true"); // the default
@@ -450,13 +455,14 @@ describe("preset CRUD", () => {
 describe("colour tone in the panel", () => {
   test("pick tones; each multiplies the work and is remembered", () => {
     const { unmount } = renderDialog();
+    // Natural and vivid by default.
     expect(chip("Colour tone", "Natural").getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(chip("Colour tone", "Vivid"));
+    expect(chip("Colour tone", "Vivid").getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(chip("Colour tone", "Muted"));
     expect(count()).toContain("× 3 tones");
     unmount();
     renderDialog();
-    expect(chip("Colour tone", "Vivid").getAttribute("aria-pressed")).toBe("true");
+    expect(chip("Colour tone", "Muted").getAttribute("aria-pressed")).toBe("true");
   });
 
   test("tone badges on vivid/muted suggestions and bookmarks", async () => {

@@ -30,15 +30,17 @@ export interface AutoPreset extends AutoConfig {
 
 const none = { mode: "none" as const, strength: 0 };
 
-const BUILT_INS: Omit<AutoPreset, "tones">[] = [
+const BUILT_INS: (Omit<AutoPreset, "tones"> & { tones?: Tone[] })[] = [
   {
+    // Natural and vivid, no dithering or clean-up (both erase faint details), 12 suggestions.
     id: "builtin:balanced",
     name: "Balanced (default)",
     builtIn: true,
-    space: DEFAULT_SEARCH_SPACE,
-    count: 6,
+    space: { ...DEFAULT_SEARCH_SPACE, dither: [none], cleanup: [0] },
+    count: 12,
     limit: 300,
     refine: DEFAULT_REFINE,
+    tones: ["natural", "vivid"],
   },
   {
     id: "builtin:quick",
@@ -106,7 +108,7 @@ const BUILT_INS: Omit<AutoPreset, "tones">[] = [
   },
 ];
 
-export const BUILT_IN_PRESETS: AutoPreset[] = BUILT_INS.map((p) => ({ ...p, tones: ["natural"] }));
+export const BUILT_IN_PRESETS: AutoPreset[] = BUILT_INS.map((p) => ({ ...p, tones: p.tones ?? ["natural"] }));
 
 const PRESETS_KEY = "bead-pattern:auto-presets";
 const CONFIG_KEY = "bead-pattern:auto-config";

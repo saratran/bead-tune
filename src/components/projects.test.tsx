@@ -322,19 +322,21 @@ describe("server projects and versions", () => {
 
   const target = (name: "This device" | "Server") => within(dialog()).getByRole("radio", { name });
 
-  test("without a server, only This device is offered", async () => {
+  test("without a server, there's no choice of where to save (it's this browser)", async () => {
     await loadSample();
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
-    await waitFor(() => expect((target("Server") as HTMLButtonElement).disabled).toBe(true));
-    expect(within(dialog()).getByText("Server storage isn't available here.")).toBeTruthy();
-    expect(target("This device").getAttribute("aria-checked")).toBe("true");
+    await waitFor(() => expect(within(dialog()).getByRole("region", { name: "On this device" })).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 20)); // let the server check finish
+    expect(within(dialog()).queryByRole("radiogroup", { name: "Save to" }) === null).toBe(true);
+    expect(within(dialog()).queryByRole("region", { name: "On the server" }) === null).toBe(true);
+    expect(within(dialog()).getByText("Saved in this browser only.")).toBeTruthy();
   });
 
   test("save to the server, then reopen it from the list", async () => {
     api = useInMemoryServer();
     await loadSample();
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
-    await waitFor(() => expect((target("Server") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(target("Server")).toBeTruthy());
     fireEvent.click(target("Server"));
     fireEvent.change(within(dialog()).getByLabelText("Save this pattern"), { target: { value: "Shared berry" } });
     fireEvent.click(within(dialog()).getByRole("button", { name: "Save" }));

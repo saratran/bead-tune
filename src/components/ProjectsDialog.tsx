@@ -306,25 +306,19 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
               disabled={!canSave}
             />
           </div>
-          <div className="row save-target">
-            <span className="small">Save to</span>
-            <div className="segmented" role="radiogroup" aria-label="Save to">
-              {(["local", "server"] as const).map((loc) => (
-                <button
-                  key={loc}
-                  type="button"
-                  role="radio"
-                  aria-checked={target === loc}
-                  className={target === loc ? "on" : ""}
-                  disabled={loc === "server" && !serverOk}
-                  onClick={() => setTarget(loc)}
-                >
-                  {LOCATION_LABEL[loc]}
-                </button>
-              ))}
+          {/* Only offered when a server is there (self-hosted with server.ts); static hosting saves in the browser. */}
+          {serverOk && (
+            <div className="row save-target">
+              <span className="small">Save to</span>
+              <div className="segmented" role="radiogroup" aria-label="Save to">
+                {(["local", "server"] as const).map((loc) => (
+                  <button key={loc} type="button" role="radio" aria-checked={target === loc} className={target === loc ? "on" : ""} onClick={() => setTarget(loc)}>
+                    {LOCATION_LABEL[loc]}
+                  </button>
+                ))}
+              </div>
             </div>
-            {serverOk === false && <span className="muted small">Server storage isn't available here.</span>}
-          </div>
+          )}
           <div className="row">
             <button type="submit" className="btn btn-primary" disabled={!canSave || busy}>
               {updatesCurrent ? "Save" : mode === "saveAs" ? "Save as new version" : "Save"}

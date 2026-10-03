@@ -2145,6 +2145,15 @@ button.zoom-level:hover:not(:disabled) {
   background: radial-gradient(circle, var(--dots) 2px, transparent 2.5px) 0 0 / 18px 18px;
 }
 
+.welcome-brand {
+  margin: 0;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--link);
+}
+
 .welcome h1 {
   font-size: clamp(26px, 3.4vw, 40px);
   font-weight: 800;

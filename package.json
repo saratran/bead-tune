@@ -1,11 +1,11 @@
 {
-  "name": "fuse-bead-pattern-generator",
+  "name": "beadtune",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "bun --hot server.ts",
     "start": "NODE_ENV=production bun server.ts",
-    "build": "bun build ./index.html --outdir dist --minify --splitting",
+    "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "palettes": "bun scripts/import-beadcolors.ts"

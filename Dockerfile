@@ -1,4 +1,4 @@
-# Bead Pattern Maker — production image.
+# BeadTune — production image.
 # Bun bundles the frontend (index.html → React app) when the server starts.
 FROM oven/bun:1.2-slim
 
