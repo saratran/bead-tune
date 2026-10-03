@@ -47,8 +47,19 @@ function renderDialog(props: Partial<Parameters<typeof AutoDialog>[0]> = {}) {
 describe("presets storage", () => {
   test("defaults to the built-in balanced preset", () => {
     // Natural + vivid, no dithering or clean-up, 12 suggestions, up to 300 combinations, pattern-search fine-tuning.
-    expect(loadLastConfig()).toMatchObject({ space: BUILT_IN_PRESETS[0]!.space, count: 12, limit: 300, tones: ["natural", "vivid"], refine: { enabled: true, method: "pattern", budget: 40 } });
-    expect(BUILT_IN_PRESETS[0]!.space).toMatchObject({ dither: [{ mode: "none", strength: 0 }], cleanup: [0], metric: ["accurate"], maxColors: [12, 24, 40, 64] });
+    expect(loadLastConfig()).toMatchObject({ space: BUILT_IN_PRESETS[0]!.space, count: 12, limit: 300, tones: ["natural", "vivid", "muted"], refine: { enabled: true, method: "pattern", budget: 40 } });
+    expect(BUILT_IN_PRESETS[0]!.space).toEqual({
+      sampling: ["smooth", "sharp"],
+      denoise: [false],
+      maxColors: [24, 40, 64],
+      dither: [{ mode: "none", strength: 0 }],
+      cleanup: [0],
+      metric: ["accurate"],
+      minBeads: [0],
+      brightness: [-10, 0, 10],
+      contrast: [-10, 0, 15],
+      saturation: [-20, 0, 20],
+    });
     expect(allPresets().map((p) => p.name)).toEqual(BUILT_IN_PRESETS.map((p) => p.name));
   });
 
@@ -72,11 +83,11 @@ describe("presets storage", () => {
 describe("AutoDialog", () => {
   test("shows the combination count and updates it as values are toggled", () => {
     renderDialog();
-    expect(count()).toStartWith("32 combinations × 2 tones");
+    expect(count()).toStartWith("162 combinations × 3 tones");
     fireEvent.click(chip("Colours", "100"));
-    expect(count()).toStartWith("40 combinations");
+    expect(count()).toStartWith("216 combinations");
     fireEvent.click(chip("Sampling", "Sharp"));
-    expect(count()).toStartWith("20 combinations");
+    expect(count()).toStartWith("108 combinations");
   });
 
   test("the last selected value can't be turned off", () => {
@@ -335,7 +346,7 @@ describe("custom search values", () => {
     fireEvent.change(screen.getByLabelText("Add brightness value"), { target: { value: "65" } });
     fireEvent.click(screen.getByLabelText("Add brightness"));
     expect(chip("Brightness", "+65").getAttribute("aria-pressed")).toBe("true");
-    expect(Number(count().split(" ")[0]!.replace(/,/g, ""))).toBe(before * 2);
+    expect(Number(count().split(" ")[0]!.replace(/,/g, ""))).toBe((before / 3) * 4); // brightness: 3 values → 4
     fireEvent.change(screen.getByLabelText("Add saturation value"), { target: { value: "500" } });
     fireEvent.click(screen.getByLabelText("Add saturation"));
     expect(chip("Saturation", "+100").getAttribute("aria-pressed")).toBe("true");
@@ -455,14 +466,14 @@ describe("preset CRUD", () => {
 describe("colour tone in the panel", () => {
   test("pick tones; each multiplies the work and is remembered", () => {
     const { unmount } = renderDialog();
-    // Natural and vivid by default.
-    expect(chip("Colour tone", "Natural").getAttribute("aria-pressed")).toBe("true");
-    expect(chip("Colour tone", "Vivid").getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(chip("Colour tone", "Muted"));
+    // All three by default.
+    for (const t of ["Natural", "Vivid", "Muted"]) expect(chip("Colour tone", t).getAttribute("aria-pressed")).toBe("true");
     expect(count()).toContain("× 3 tones");
+    fireEvent.click(chip("Colour tone", "Muted"));
+    expect(count()).toContain("× 2 tones");
     unmount();
     renderDialog();
-    expect(chip("Colour tone", "Muted").getAttribute("aria-pressed")).toBe("true");
+    expect(chip("Colour tone", "Muted").getAttribute("aria-pressed")).toBe("false");
   });
 
   test("tone badges on vivid/muted suggestions and bookmarks", async () => {

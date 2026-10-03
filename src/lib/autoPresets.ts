@@ -32,15 +32,24 @@ const none = { mode: "none" as const, strength: 0 };
 
 const BUILT_INS: (Omit<AutoPreset, "tones"> & { tones?: Tone[] })[] = [
   {
-    // Natural and vivid, no dithering or clean-up (both erase faint details), 12 suggestions.
+    // All three tones; no dithering or clean-up (both erase faint details); gentle
+    // brightness/contrast/saturation either way; 12 suggestions.
     id: "builtin:balanced",
     name: "Balanced (default)",
     builtIn: true,
-    space: { ...DEFAULT_SEARCH_SPACE, dither: [none], cleanup: [0] },
+    space: {
+      ...DEFAULT_SEARCH_SPACE,
+      maxColors: [24, 40, 64],
+      dither: [none],
+      cleanup: [0],
+      brightness: [-10, 0, 10],
+      contrast: [-10, 0, 15],
+      saturation: [-20, 0, 20],
+    },
     count: 12,
     limit: 300,
     refine: DEFAULT_REFINE,
-    tones: ["natural", "vivid"],
+    tones: ["natural", "vivid", "muted"],
   },
   {
     id: "builtin:quick",
