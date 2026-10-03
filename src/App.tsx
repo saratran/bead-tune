@@ -762,15 +762,17 @@ export function App() {
         <div className="topbar-right">
           <span className="muted small privacy-note">Your image never leaves your browser</span>
           {project && (
-            <span className="project-status small" title={dirty ? "Unsaved changes" : "Saved"}>
+            <button className="project-status small" title={dirty ? "Unsaved changes" : "Saved"} onClick={() => setProjectsOpen(true)}>
               {project.location === "server" && (
                 <span className="location-badge" title="Saved on the server" aria-label="Stored on the server">
                   ⛁
                 </span>
               )}
-              {project.name}
+              <span className="project-status-name" title={project.name}>
+                {project.name}
+              </span>
               {dirty && <span className="unsaved-dot" aria-label="Unsaved changes" />}
-            </span>
+            </button>
           )}
           <button className="theme-btn" disabled={!image} onClick={quickSave}>
             Save

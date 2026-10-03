@@ -171,6 +171,44 @@ describe("projects in the app", () => {
     expect(document.querySelector(".pattern-size")!.textContent).toBe("52 × 52 beads");
   });
 
+  test("versions are grouped, and projects can be searched", async () => {
+    await loadSample();
+    await saveAs("Berry");
+    const saveVersion = async (name: string) => {
+      fireEvent.change(within(dialog()).getByLabelText("Current project"), { target: { value: name } });
+      fireEvent.click(within(dialog()).getByRole("button", { name: "Save as new version" }));
+      await waitFor(() => expect(within(dialog()).getByText(name)).toBeTruthy());
+    };
+    await saveVersion("Berry v2");
+    await saveVersion("Apple pie with a very long name that would not fit");
+
+    const local = () => within(dialog()).getByRole("region", { name: "On this device" });
+    expect(within(local()).getByText("Berry v2")).toBeTruthy();
+    expect(within(local()).queryByText("Berry") === null).toBe(true); // tucked under v2
+    fireEvent.click(within(local()).getByRole("button", { name: /1 older version/ }));
+    expect(within(local()).getByText("Berry")).toBeTruthy();
+    // Long names are shown in full (and on hover).
+    expect(within(local()).getByTitle("Apple pie with a very long name that would not fit")).toBeTruthy();
+
+    fireEvent.change(within(dialog()).getByLabelText("Search projects"), { target: { value: "aple" } });
+    expect(within(local()).getByText(/^Apple pie/)).toBeTruthy();
+    expect(within(local()).queryByText("Berry v2") === null).toBe(true);
+    fireEvent.change(within(dialog()).getByLabelText("Search projects"), { target: { value: "bery" } });
+    expect(within(local()).getByText("Berry v2")).toBeTruthy();
+    expect(within(local()).getByText("Berry")).toBeTruthy(); // matching versions all show while searching
+    fireEvent.change(within(dialog()).getByLabelText("Search projects"), { target: { value: "zzz" } });
+    expect(within(local()).getByText("No projects match “zzz”.")).toBeTruthy();
+  });
+
+  test("the project name in the top bar opens Projects and shows the full name on hover", async () => {
+    await loadSample();
+    await saveAs("A rather long project name for the top bar");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    fireEvent.click(screen.getByTitle("Saved"));
+    expect(dialog()).toBeTruthy();
+    expect(screen.getAllByTitle("A rather long project name for the top bar").length).toBeGreaterThan(0);
+  });
+
   test("a new image starts a new unsaved project", async () => {
     await loadSample();
     await saveAs("Berry");

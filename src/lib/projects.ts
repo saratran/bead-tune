@@ -178,6 +178,48 @@ export function nextVersionName(name: string, existing: string[]): string {
   return `${base} v${max + 1}`;
 }
 
+/** The name a project's versions share: "Berry v3" → "Berry". */
+export function versionBase(name: string): string {
+  return name.replace(/\s+v\d+$/i, "").trim() || name.trim();
+}
+
+/** Projects grouped into versions (by name), newest version first and newest group first. */
+export function groupVersions(items: ProjectMeta[]): ProjectMeta[][] {
+  const groups = new Map<string, ProjectMeta[]>();
+  for (const p of items) {
+    const key = versionBase(p.name).toLowerCase();
+    groups.set(key, [...(groups.get(key) ?? []), p]);
+  }
+  return [...groups.values()]
+    .map((g) => g.sort((a, b) => b.updatedAt - a.updatedAt))
+    .sort((a, b) => b[0]!.updatedAt - a[0]!.updatedAt);
+}
+
+/**
+ * Fuzzy name match: every word of the query must appear in order (letters may be
+ * spread out). Higher is better; null = no match. Whole words, word starts and
+ * runs of consecutive letters score higher.
+ */
+export function fuzzyScore(query: string, text: string): number | null {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const t = text.toLowerCase();
+  let total = 0;
+  for (const word of words) {
+    if (t.includes(word)) total += 10 + word.length * 3;
+    let from = 0;
+    let prev = -2;
+    for (const ch of word) {
+      const i = t.indexOf(ch, from);
+      if (i < 0) return null;
+      total += i === prev + 1 ? 3 : 1;
+      if (i === 0 || /[\s\-_.(]/.test(t[i - 1]!)) total += 2;
+      prev = i;
+      from = i + 1;
+    }
+  }
+  return total;
+}
+
 /** Ask the browser not to evict saved projects under storage pressure (best effort). */
 export function requestPersistentStorage(): void {
   navigator.storage?.persist?.().catch(() => {});

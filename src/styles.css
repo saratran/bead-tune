@@ -116,9 +116,9 @@ button:disabled {
 }
 
 .app {
-  max-width: 1240px;
+  max-width: 1680px;
   margin: 0 auto;
-  padding: 0 16px 32px;
+  padding: 0 12px 24px;
 }
 
 /* Top bar */
@@ -127,7 +127,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 0;
+  padding: 10px 0;
 }
 
 .brand {
@@ -157,7 +157,7 @@ button:disabled {
 
 .hero {
   text-align: center;
-  padding: 24px 0 28px;
+  padding: 8px 0 16px;
 }
 
 .hero h1 {
@@ -175,8 +175,8 @@ button:disabled {
 /* Layout */
 .layout {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 12px;
   align-items: start;
 }
 
@@ -191,7 +191,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 18px;
+  padding: 14px;
 }
 
 .card-head {
@@ -635,7 +635,7 @@ input[type="range"] {
   background: var(--backdrop);
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: 10px;
   z-index: 10;
 }
 
@@ -966,7 +966,17 @@ input[type="range"] {
   align-items: center;
   gap: 6px;
   font-weight: 700;
-  max-width: 180px;
+  max-width: 280px;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.project-status-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1051,10 +1061,29 @@ input[type="range"] {
   flex-direction: column;
 }
 
+/* Long names wrap rather than being cut off. */
 .project-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+.project-search {
+  margin-bottom: 12px;
+}
+
+/* A project's versions: the newest, then (when expanded) the older ones, indented. */
+.project-list li.project-versions-group {
+  display: block;
+  padding: 0;
+  border: none;
+}
+
+.project-versions-group > ul > li + li {
+  margin-left: 24px;
+}
+
+.versions-toggle {
+  align-self: flex-start;
+  margin-top: 2px;
 }
 
 .project-actions {
@@ -1455,7 +1484,7 @@ input[type="range"] {
 }
 
 .auto-modal {
-  width: min(1100px, 100%);
+  width: min(1500px, 100%);
   max-height: 94vh;
 }
 
@@ -1574,6 +1603,7 @@ input[type="range"] {
 }
 
 .auto-card {
+  position: relative;
   display: flex;
   gap: 12px;
   padding: 10px;
@@ -1592,6 +1622,7 @@ input[type="range"] {
 }
 
 .auto-card-info {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1605,8 +1636,13 @@ input[type="range"] {
 
 .auto-scores {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 2px 10px;
   font-weight: 700;
+}
+
+.auto-scores > span {
+  white-space: nowrap;
 }
 
 .auto-settings {
@@ -1655,8 +1691,17 @@ input[type="range"] {
 
 .auto-card-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
+  /* Room for the star, which sits in the card's corner. */
+  padding-right: 26px;
+}
+
+.auto-card-title .star-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
 }
 
 .badge {
@@ -1669,6 +1714,7 @@ input[type="range"] {
   background: var(--accent-soft);
   color: var(--link);
   cursor: help;
+  white-space: nowrap;
 }
 
 .star-btn {

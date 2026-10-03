@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_IMAGE_SETTINGS } from "../components/ImageOptions";
-import { deleteProject, listProjects, loadProjectImage, nextVersionName, renameProject, saveProject, type ProjectState } from "./projects";
+import { deleteProject, fuzzyScore, groupVersions, listProjects, loadProjectImage, nextVersionName, versionBase, renameProject, saveProject, type ProjectState } from "./projects";
 
 const state: ProjectState = {
   version: 1,
@@ -94,5 +94,29 @@ describe("nextVersionName", () => {
 
   test("blank names", () => {
     expect(nextVersionName("  ", [])).toBe("Untitled v2");
+  });
+});
+
+describe("versions and search", () => {
+  const meta = (name: string, updatedAt: number) => ({ id: name, name, updatedAt }) as unknown as import("./projects").ProjectMeta;
+
+  test("versionBase strips the version suffix", () => {
+    expect(versionBase("Berry v12")).toBe("Berry");
+    expect(versionBase("Berry")).toBe("Berry");
+    expect(versionBase("v2")).toBe("v2");
+  });
+
+  test("groupVersions puts versions together, newest first", () => {
+    const groups = groupVersions([meta("Berry", 1), meta("Apple", 5), meta("Berry v3", 4), meta("berry v2", 2)]);
+    expect(groups.map((g) => g.map((p) => p.name))).toEqual([["Apple"], ["Berry v3", "berry v2", "Berry"]]);
+  });
+
+  test("fuzzyScore matches letters in order and prefers closer matches", () => {
+    expect(fuzzyScore("bry", "Strawberry")).not.toBeNull();
+    expect(fuzzyScore("yrb", "Strawberry")).toBeNull();
+    expect(fuzzyScore("straw cat", "Strawberry cat")).not.toBeNull();
+    expect(fuzzyScore("straw dog", "Strawberry cat")).toBeNull();
+    expect(fuzzyScore("berry", "Berry v2")!).toBeGreaterThan(fuzzyScore("berry", "Big errand by Ray")!);
+    expect(fuzzyScore("", "anything")).toBe(0);
   });
 });

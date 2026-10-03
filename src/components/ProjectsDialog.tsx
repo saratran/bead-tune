@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { nextVersionName, type ProjectLocation, type ProjectMeta } from "../lib/projects";
+import { fuzzyScore, groupVersions, nextVersionName, versionBase, type ProjectLocation, type ProjectMeta } from "../lib/projects";
 import { localStore, serverAvailable, storeFor } from "../lib/projectStores";
 
 export interface OpenProject {
@@ -46,6 +46,16 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  // Version groups showing their older versions, by "location:base name".
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) =>
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const setTarget = (t: ProjectLocation) => {
     setTargetState(t);
@@ -133,102 +143,137 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
       await refresh();
     });
 
-  const renderList = (location: ProjectLocation, items: ProjectMeta[] | null) => (
-    <section className="project-group" aria-label={location === "local" ? "On this device" : "On the server"}>
-      <h4>{location === "local" ? "On this device" : "On the server"}</h4>
-      {items === null ? (
-        <p className="muted small">Loading…</p>
-      ) : items.length === 0 ? (
-        <p className="muted small">No saved projects yet.</p>
-      ) : (
-        <ul>
-          {items.map((p) => {
-            const key = `${location}:${p.id}`;
-            const isCurrent = current?.id === p.id && current.location === location;
-            return (
-              <li key={key} className={isCurrent ? "active" : ""}>
-                <img className="project-thumb" src={p.thumbnail} alt="" />
-                <div className="project-info">
-                  {renaming?.id === p.id && renaming.location === location ? (
-                    <form
-                      className="row"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void rename();
-                      }}
-                    >
-                      <input
-                        className="input"
-                        aria-label="New name"
-                        value={renaming.name}
-                        autoFocus
-                        onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
-                        onKeyDown={(e) => e.key === "Escape" && setRenaming(null)}
-                      />
-                      <button type="submit" className="btn btn-primary" disabled={busy}>
-                        OK
-                      </button>
-                    </form>
-                  ) : (
-                    <>
-                      <strong className="project-name">{p.name}</strong>
-                      <span className="muted small">
-                        {p.state.width} beads wide · {dateFormat.format(p.updatedAt)}
-                        {isCurrent && " · open"}
-                      </span>
-                    </>
-                  )}
-                </div>
-                <div className="project-actions">
-                  {confirmDelete === key ? (
-                    <>
-                      <span className="small">Delete?</span>
-                      <button className="btn btn-danger" disabled={busy} onClick={() => void remove(p)}>
-                        Delete
-                      </button>
-                      <button className="btn btn-ghost" onClick={() => setConfirmDelete(null)}>
-                        Keep
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        className="btn btn-primary"
-                        disabled={busy}
-                        onClick={() =>
-                          run(async () => {
-                            if (await onOpen(p)) onClose();
-                          })
-                        }
-                      >
-                        Open
-                      </button>
-                      <button className="btn btn-ghost" disabled={busy} onClick={() => setRenaming({ id: p.id, location, name: p.name })}>
-                        Rename
-                      </button>
-                      {location === "local" && serverOk && (
-                        <button className="btn btn-ghost" disabled={busy} onClick={() => void copy(p, "server")}>
-                          Copy to server
-                        </button>
-                      )}
-                      {location === "server" && (
-                        <button className="btn btn-ghost" disabled={busy} onClick={() => void copy(p, "local")}>
-                          Copy to device
-                        </button>
-                      )}
-                      <button className="btn btn-ghost" disabled={busy} onClick={() => setConfirmDelete(key)}>
-                        Delete
-                      </button>
-                    </>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
+  const renderItem = (p: ProjectMeta, location: ProjectLocation, versions?: { more: number; open: boolean; onToggle: () => void }) => {
+    const key = `${location}:${p.id}`;
+    const isCurrent = current?.id === p.id && current.location === location;
+    return (
+      <li key={key} className={isCurrent ? "active" : ""}>
+        <img className="project-thumb" src={p.thumbnail} alt="" />
+        <div className="project-info">
+          {renaming?.id === p.id && renaming.location === location ? (
+            <form
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void rename();
+              }}
+            >
+              <input
+                className="input"
+                aria-label="New name"
+                value={renaming.name}
+                autoFocus
+                onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
+                onKeyDown={(e) => e.key === "Escape" && setRenaming(null)}
+              />
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                OK
+              </button>
+            </form>
+          ) : (
+            <>
+              <strong className="project-name" title={p.name}>
+                {p.name}
+              </strong>
+              <span className="muted small">
+                {p.state.width} beads wide · {dateFormat.format(p.updatedAt)}
+                {isCurrent && " · open"}
+              </span>
+              {versions && (
+                <button className="link-btn small versions-toggle" aria-expanded={versions.open} onClick={versions.onToggle}>
+                  {versions.open ? "▾ Hide" : "▸"} {versions.more} older version{versions.more === 1 ? "" : "s"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        <div className="project-actions">
+          {confirmDelete === key ? (
+            <>
+              <span className="small">Delete?</span>
+              <button className="btn btn-danger" disabled={busy} onClick={() => void remove(p)}>
+                Delete
+              </button>
+              <button className="btn btn-ghost" onClick={() => setConfirmDelete(null)}>
+                Keep
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    if (await onOpen(p)) onClose();
+                  })
+                }
+              >
+                Open
+              </button>
+              <button className="btn btn-ghost" disabled={busy} onClick={() => setRenaming({ id: p.id, location, name: p.name })}>
+                Rename
+              </button>
+              {location === "local" && serverOk && (
+                <button className="btn btn-ghost" disabled={busy} onClick={() => void copy(p, "server")}>
+                  Copy to server
+                </button>
+              )}
+              {location === "server" && (
+                <button className="btn btn-ghost" disabled={busy} onClick={() => void copy(p, "local")}>
+                  Copy to device
+                </button>
+              )}
+              <button className="btn btn-ghost" disabled={busy} onClick={() => setConfirmDelete(key)}>
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      </li>
+    );
+  };
+
+  const renderList = (location: ProjectLocation, items: ProjectMeta[] | null) => {
+    const searching = query.trim() !== "";
+    // While searching: only matching versions, best matches first, all shown.
+    const groups =
+      items &&
+      groupVersions(items)
+        .map((g) => g.filter((p) => !searching || fuzzyScore(query, p.name) !== null))
+        .filter((g) => g.length)
+        .map((g) => ({ g, score: searching ? Math.max(...g.map((p) => fuzzyScore(query, p.name)!)) : 0 }))
+        .sort((a, b) => b.score - a.score)
+        .map(({ g }) => g);
+    return (
+      <section className="project-group" aria-label={location === "local" ? "On this device" : "On the server"}>
+        <h4>{location === "local" ? "On this device" : "On the server"}</h4>
+        {items === null ? (
+          <p className="muted small">Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="muted small">No saved projects yet.</p>
+        ) : !groups!.length ? (
+          <p className="muted small">No projects match “{query.trim()}”.</p>
+        ) : (
+          <ul>
+            {groups!.map((g) => {
+              const key = `${location}:${versionBase(g[0]!.name).toLowerCase()}`;
+              const open = searching || expanded.has(key);
+              const [latest, ...older] = g;
+              return (
+                <li key={key} className="project-versions-group">
+                  <ul>
+                    {renderItem(latest!, location, older.length && !searching ? { more: older.length, open, onToggle: () => toggleGroup(key) } : undefined)}
+                    {open && older.map((p) => renderItem(p, location))}
+                  </ul>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    );
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -297,6 +342,16 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
         </form>
 
         <div className="project-list">
+          {[...(lists.local ?? []), ...(lists.server ?? [])].length > 1 && (
+            <input
+              type="search"
+              className="input project-search"
+              placeholder="Search projects"
+              aria-label="Search projects"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          )}
           {renderList("local", lists.local)}
           {serverOk && renderList("server", lists.server)}
         </div>
