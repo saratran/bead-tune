@@ -124,3 +124,8 @@ Web Workers (`autoPool.ts`, `autoWorker.ts`).
   [happy-dom](https://github.com/capricorn86/happy-dom) and
   [Testing Library](https://testing-library.com/).
 - **Font:** [Nunito](https://fonts.google.com/specimen/Nunito) (SIL Open Font License).
+
+## Licence
+
+[MIT](LICENSE) © 2026 Sara Tran. Bead colour data from maxcleme/beadcolors is also MIT
+(its licence is kept in `src/lib/beadcolors.gen.ts`).
