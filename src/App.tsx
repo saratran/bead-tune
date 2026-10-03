@@ -546,8 +546,29 @@ export function App() {
   const unsavedWork = project ? dirty : !!image && (edits.map.size > 0 || swaps.size > 0 || excluded.size > 0);
 
   /** Asks before replacing unsaved work; resolves true to go ahead. */
-  const confirmDiscard = (): Promise<boolean> =>
-    unsavedWork ? new Promise((resolve) => setDiscardPrompt(() => resolve)) : Promise.resolve(true);
+  /** Asks before dropping unsaved work. `anyImage`: an image never saved as a project counts too. */
+  const confirmDiscard = (anyImage = false): Promise<boolean> =>
+    unsavedWork || (anyImage && !project && !!image) ? new Promise((resolve) => setDiscardPrompt(() => resolve)) : Promise.resolve(true);
+
+  /** Starts over: no image or project; bead choice, width and pegboard stay as they are. */
+  const newProject = async () => {
+    if (!(await confirmDiscard(true))) return;
+    setImage(null);
+    setImageBlob(null);
+    setFileName("pattern");
+    setProject(null);
+    setSavedJson(null);
+    setCrop(FULL_CROP);
+    setImageSettings(DEFAULT_IMAGE_SETTINGS);
+    resetEdits();
+    clearHandEdits();
+    setBuild({ w: 0, h: 0, placed: new Set() });
+    setTool(null);
+    setBuildOpen(false);
+    setPickingBg(false);
+    setError(null);
+    setNotice({ text: "New project" });
+  };
 
   const answerDiscard = async (choice: "save" | "discard" | "cancel") => {
     const resolve = discardPrompt;
@@ -870,6 +891,9 @@ export function App() {
           </button>
         )}
         <div className="topbar-right">
+          <button className="top-btn" disabled={!image && !project} onClick={() => void newProject()} title="Start a new project (asks first if this one isn't saved)">
+            New
+          </button>
           <button className="top-btn" disabled={!image} onClick={quickSave} title="Save (⌘S)">
             Save
           </button>
@@ -1358,7 +1382,7 @@ export function App() {
             <p className="confirm-text">
               {project
                 ? `“${project.name}” has changes that haven't been saved.`
-                : "This pattern has edits and hasn't been saved as a project."}
+                : "This pattern hasn't been saved as a project."}
             </p>
             <div className="modal-foot">
               <button className="btn btn-ghost" onClick={() => void answerDiscard("cancel")} autoFocus>

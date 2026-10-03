@@ -230,6 +230,32 @@ describe("projects in the app", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Build · 25%" })).toBeTruthy());
   });
 
+  test("New: asks first when the image isn't saved; Cancel keeps it, Discard starts over", async () => {
+    await loadSample();
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    let prompt = screen.getByRole("alertdialog", { name: "Unsaved changes" });
+    expect(prompt.textContent).toContain("hasn't been saved as a project");
+    fireEvent.click(within(prompt).getByRole("button", { name: "Cancel" }));
+    expect(document.querySelector(".pattern-canvas")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    prompt = screen.getByRole("alertdialog", { name: "Unsaved changes" });
+    fireEvent.click(within(prompt).getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.getByText("Try a sample image")).toBeTruthy());
+    expect(document.querySelector(".pattern-canvas") === null).toBe(true);
+    expect((screen.getByRole("button", { name: "New" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("New on a saved project with no changes doesn't ask", async () => {
+    await loadSample();
+    await saveAs("Kept");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    expect(screen.queryByRole("alertdialog") === null).toBe(true);
+    await waitFor(() => expect(screen.getByText("Try a sample image")).toBeTruthy());
+    expect(screen.queryByTitle("Saved") === null).toBe(true);
+  });
+
   test("a new image starts a new unsaved project", async () => {
     await loadSample();
     await saveAs("Berry");
