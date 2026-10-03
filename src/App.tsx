@@ -129,6 +129,7 @@ export function App() {
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [settingsTab, setSettingsTab] = useState<"setup" | "image" | "colours">("setup");
   // Resolves the pending "discard unsaved changes?" question.
   const [discardPrompt, setDiscardPrompt] = useState<((proceed: boolean) => void) | null>(null);
   // Set when a project was just opened: the next state snapshot is its "saved" state.
@@ -750,6 +751,12 @@ export function App() {
   const edited = excluded.size > 0 || swaps.size > 0;
   const ownedEmpty = ownedOnly && ownedSet.size === 0;
 
+  const resultsCount = (autoResults?.key === autoKey ? autoResults.list.length : 0) + bookmarks.length;
+  const sampleImage = async () => {
+    const img = await makeSampleImage();
+    startImage(img, await imageToBlob(img), "sample");
+  };
+
   return (
     <div className="app">
       <header className="topbar">
@@ -757,62 +764,61 @@ export function App() {
           <span className="logo" aria-hidden>
             <i /> <i /> <i /> <i />
           </span>
-          Bead Pattern Maker
+          <span className="brand-name">Bead Pattern Maker</span>
         </div>
-        <div className="topbar-right">
-          <span className="muted small privacy-note">Your image never leaves your browser</span>
-          {project && (
-            <button className="project-status small" title={dirty ? "Unsaved changes" : "Saved"} onClick={() => setProjectsOpen(true)}>
-              {project.location === "server" && (
-                <span className="location-badge" title="Saved on the server" aria-label="Stored on the server">
-                  ⛁
-                </span>
-              )}
-              <span className="project-status-name" title={project.name}>
-                {project.name}
+        {project && (
+          <button className="project-status" title={dirty ? "Unsaved changes" : "Saved"} onClick={() => setProjectsOpen(true)}>
+            {project.location === "server" && (
+              <span className="location-badge" title="Saved on the server" aria-label="Stored on the server">
+                ⛁
               </span>
-              {dirty && <span className="unsaved-dot" aria-label="Unsaved changes" />}
-            </button>
-          )}
-          <button className="theme-btn" disabled={!image} onClick={quickSave}>
+            )}
+            <span className="project-status-name" title={project.name}>
+              {project.name}
+            </span>
+            {dirty && <span className="unsaved-dot" aria-label="Unsaved changes" />}
+          </button>
+        )}
+        <div className="topbar-right">
+          <button className="top-btn" disabled={!image} onClick={quickSave} title="Save (⌘S)">
             Save
           </button>
-          <button className="theme-btn" disabled={!image || !project} onClick={() => setProjectsOpenState("saveAs")} title="Save as a new version with a different name">
+          <button className="top-btn" disabled={!image || !project} onClick={() => setProjectsOpenState("saveAs")} title="Save as a new version with a different name">
             Save as…
           </button>
-          <button className="theme-btn" onClick={() => setProjectsOpen(true)}>
+          <button className="top-btn" onClick={() => setProjectsOpen(true)}>
             Projects
           </button>
-          <button className="theme-btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-            {theme === "dark" ? "Light mode" : "Dark mode"}
+          <button className="top-btn icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+            <span aria-hidden>{theme === "dark" ? "☀" : "☾"}</span>
+            <span className="sr-only">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
           </button>
         </div>
       </header>
 
-      <section className="hero">
-        <h1>Turn any image into a bead pattern</h1>
-        <p>Pick a photo or drawing, choose your beads and board size, and get a printable pattern with a shopping list.</p>
-      </section>
-
-      <main className="layout">
-        <aside className="card controls">
-          {image ? (
-            <>
-            <div className="source">
-              <img
-                src={image.src}
-                alt="Source"
-                className={pickingBg ? "picking" : ""}
-                title={pickingBg ? "Click the background colour" : undefined}
-                onClick={pickBackground}
-              />
-              <div className="source-actions">
-                <Dropzone onFile={onFile} compact />
-                <button className="btn btn-ghost" onClick={() => setModal({ kind: "crop" })}>
-                  ✂ Crop
-                </button>
+      <main className="workspace">
+        {/* Settings */}
+        <aside className="panel settings-panel" aria-label="Settings">
+          <div className="panel-scroll">
+            {image ? (
+              <div className="source">
+                <img
+                  src={image.src}
+                  alt="Source"
+                  className={pickingBg ? "picking" : ""}
+                  title={pickingBg ? "Click the background colour" : undefined}
+                  onClick={pickBackground}
+                />
+                <div className="source-actions">
+                  <Dropzone onFile={onFile} compact />
+                  <button className="btn btn-ghost" onClick={() => setModal({ kind: "crop" })}>
+                    ✂ Crop
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <p className="muted small panel-intro">Add an image to start. Your settings below apply as soon as it's in.</p>
+            )}
             {cropPx && (
               <p className="hint crop-status">
                 Cropped to {cropPx.w} × {cropPx.h} px ·{" "}
@@ -821,188 +827,225 @@ export function App() {
                 </button>
               </p>
             )}
-            </>
-          ) : (
-            <>
-              <Dropzone onFile={onFile} />
+            {error && <p className="error">{error}</p>}
+
+            <div className="tabs" role="tablist" aria-label="Settings">
+              {(
+                [
+                  ["setup", "Size & beads"],
+                  ["image", "Image"],
+                  ["colours", "Colours"],
+                ] as const
+              ).map(([id, label]) => (
+                <button key={id} role="tab" aria-selected={settingsTab === id} className={settingsTab === id ? "on" : ""} onClick={() => setSettingsTab(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* All tabs stay mounted (hidden with CSS) so their state survives switching. */}
+            <div className={`tab-panel ${settingsTab === "setup" ? "active" : ""}`}>
+              <div className="field">
+                <label htmlFor="brand">Beads</label>
+                <select
+                  id="brand"
+                  className="input"
+                  value={brandId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    guardEdits(() => changeBrand(id));
+                  }}
+                >
+                  {BRANDS.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label htmlFor="width">
+                  Width <span className="muted">in beads</span>
+                </label>
+                <div className="row">
+                  <input
+                    id="width"
+                    className="input num"
+                    type="number"
+                    min={2}
+                    max={300}
+                    disabled={imageSettings.sampling === "pixelart" && !!result?.pixelGrid && !result.pixelArtFallback}
+                    value={width}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      guardEdits(() => setWidth(v));
+                    }}
+                  />
+                  <div className="segmented">
+                    {WIDTH_PRESETS.map((n) => (
+                      <button key={n} className={width === n ? "on" : ""} onClick={() => guardEdits(() => setWidth(n))}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="field">
+                <label htmlFor="board">
+                  Pegboard size <span className="muted">pegs per side</span>
+                </label>
+                <input id="board" className="input num" type="number" min={5} max={100} value={boardInput} onChange={(e) => setBoardInput(Number(e.target.value))} />
+                {pattern && (
+                  <p className="hint">
+                    {pattern.width} × {pattern.height} beads{edgeMargin ? " (with edge margin)" : ""} · {boardsX} × {boardsY} boards of {boardSize} × {boardSize}
+                  </p>
+                )}
+              </div>
+
+              <div className="toggles">
+                <div className="toggle-row">
+                  <Toggle label="Only colours I have" checked={ownedOnly} onChange={(v) => guardEdits(() => setOwnedOnly(v))} />
+                  <button className="link-btn" onClick={() => setModal({ kind: "owned" })}>
+                    Choose ({ownedSet.size})
+                  </button>
+                </div>
+                {ownedEmpty && <p className="hint warn">Choose the colours you own to use this option.</p>}
+              </div>
+            </div>
+            <div className={`tab-panel ${settingsTab === "image" ? "active" : ""}`}>
+              <ImageOptions group="image" settings={imageSettings} onChange={changeImageSettings} result={result} pickingBackground={pickingBg} onPickBackground={setPickingBg} />
+            </div>
+            <div className={`tab-panel ${settingsTab === "colours" ? "active" : ""}`}>
+              <ImageOptions group="colours" settings={imageSettings} onChange={changeImageSettings} result={result} pickingBackground={pickingBg} onPickBackground={setPickingBg} />
+            </div>
+          </div>
+
+          <div className="panel-foot auto-foot">
+            <button className="btn btn-auto full" disabled={!pattern} onClick={() => setModal({ kind: "auto", tab: "search" })}>
+              ✨ Auto suggestions
+            </button>
+            <div className="results-row">
+              <button className="btn btn-quiet" disabled={!pattern} onClick={() => setModal({ kind: "auto", tab: "results" })}>
+                ★ Results{resultsCount > 0 ? ` (${resultsCount})` : ""}
+              </button>
               <button
-                className="btn btn-ghost full"
-                onClick={async () => {
-                  const img = await makeSampleImage();
-                  startImage(img, await imageToBlob(img), "sample");
+                className="btn btn-quiet"
+                disabled={!pattern}
+                title="Save your current image settings as a bookmark, to compare or fine-tune later"
+                onClick={() => {
+                  const err = bookmarkCurrent();
+                  if (err) setNotice({ text: err, error: true });
                 }}
               >
-                Try a sample image
-              </button>
-            </>
-          )}
-          {error && <p className="error">{error}</p>}
-
-          <div className="field">
-            <label htmlFor="brand">Beads</label>
-            <select id="brand" className="input" value={brandId} onChange={(e) => {
-                const id = e.target.value;
-                guardEdits(() => changeBrand(id));
-              }}>
-              {BRANDS.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field">
-            <label htmlFor="width">
-              Width <span className="muted">in beads</span>
-            </label>
-            <div className="row">
-              <input
-                id="width"
-                className="input num"
-                type="number"
-                min={2}
-                max={300}
-                disabled={imageSettings.sampling === "pixelart" && !!result?.pixelGrid && !result.pixelArtFallback}
-                value={width}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  guardEdits(() => setWidth(v));
-                }}
-              />
-              <div className="segmented">
-                {WIDTH_PRESETS.map((n) => (
-                  <button key={n} className={width === n ? "on" : ""} onClick={() => guardEdits(() => setWidth(n))}>
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {pattern && (
-              <p className="hint">
-                {pattern.width} × {pattern.height} beads{edgeMargin ? " (with edge margin)" : ""} · {boardsX} × {boardsY} boards of {boardSize} × {boardSize}
-              </p>
-            )}
-          </div>
-
-          <div className="field">
-            <label htmlFor="board">
-              Pegboard size <span className="muted">pegs per side</span>
-            </label>
-            <input
-              id="board"
-              className="input num"
-              type="number"
-              min={5}
-              max={100}
-              value={boardInput}
-              onChange={(e) => setBoardInput(Number(e.target.value))}
-            />
-          </div>
-
-          <div className="toggles">
-            <div className="toggle-row">
-              <Toggle label="Only colours I have" checked={ownedOnly} onChange={(v) => guardEdits(() => setOwnedOnly(v))} />
-              <button className="link-btn" onClick={() => setModal({ kind: "owned" })}>
-                Choose ({ownedSet.size})
+                ★ Bookmark current settings
               </button>
             </div>
-            {ownedEmpty && <p className="hint warn">Choose the colours you own to use this option.</p>}
           </div>
-
-          <button className="btn btn-auto full" disabled={!pattern} onClick={() => setModal({ kind: "auto", tab: "search" })}>
-            ✨ Auto suggestions
-          </button>
-          <div className="row results-row">
-            <button className="btn btn-ghost" disabled={!pattern} onClick={() => setModal({ kind: "auto", tab: "results" })}>
-              ★ Results{(autoResults?.key === autoKey ? autoResults.list.length : 0) + bookmarks.length > 0 ? ` (${(autoResults?.key === autoKey ? autoResults.list.length : 0) + bookmarks.length})` : ""}
-            </button>
-            <button
-              className="btn btn-ghost"
-              disabled={!pattern}
-              title="Save your current image settings as a bookmark, to compare or fine-tune later"
-              onClick={() => {
-                const err = bookmarkCurrent();
-                if (err) setNotice({ text: err, error: true });
-              }}
-            >
-              ★ Bookmark current settings
-            </button>
-          </div>
-
-          <ImageOptions
-            settings={imageSettings}
-            onChange={changeImageSettings}
-            result={result}
-            pickingBackground={pickingBg}
-            onPickBackground={setPickingBg}
-          />
         </aside>
 
-        <section className="preview-col">
-          <div className="card preview">
-            <div className="card-head">
-              <h2>
-                Pattern
-                {pattern && pattern.total > 0 && (
-                  <span className="pattern-size" title="Width × height in beads">
-                    {pattern.width} × {pattern.height} beads
+        {/* Pattern */}
+        <section className="stage" aria-label="Pattern">
+          {image ? (
+            <>
+              <div className="stage-bar">
+                <div className="stage-title">
+                  <h2>Pattern</h2>
+                  {pattern && pattern.total > 0 && (
+                    <span className="pattern-size" title="Width × height in beads">
+                      {pattern.width} × {pattern.height} beads
+                    </span>
+                  )}
+                </div>
+                <div className="stage-controls">
+                  <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} canShowOriginal={!!image} />
+                </div>
+                <div className="stage-actions">
+                  <button className={`btn ${tool ? "btn-primary" : "btn-ghost"}`} aria-pressed={!!tool} disabled={!pattern} onClick={() => setTool(tool ? null : "paint")}>
+                    {tool ? "Done editing" : "Edit beads"}
+                  </button>
+                  <button className="btn btn-ghost" disabled={!pattern?.total} onClick={enterFullscreen} title="View and edit fullscreen">
+                    ⤢ Fullscreen
+                  </button>
+                </div>
+              </div>
+              {tool && pattern && !fullscreen && editBar}
+              {pattern && pattern.total > 0 ? (
+                <div className={`compare stage-canvas ${showOriginal ? "with-original" : ""}`}>
+                  {showOriginal && !fullscreen && image && <OriginalView image={image} crop={crop} onHide={() => setDisplay({ ...display, original: false })} />}
+                  {!fullscreen && (
+                    <div className="zoom floating" role="group" aria-label="Zoom">
+                      <button className="icon-btn" onClick={() => zoomBy(1 / 1.25)} disabled={zoom <= 1} aria-label="Zoom out">
+                        −
+                      </button>
+                      <button className="zoom-level" onClick={() => setZoom(1)} disabled={zoom === 1} title="Fit to view">
+                        {Math.round(zoom * 100)}%
+                      </button>
+                      <button className="icon-btn" onClick={() => zoomBy(1.25)} disabled={zoom >= 8} aria-label="Zoom in">
+                        +
+                      </button>
+                    </div>
+                  )}
+                  <PatternView
+                    pattern={pattern}
+                    boardSize={boardSize}
+                    showBoards={showBoards}
+                    highlightId={highlightId}
+                    theme={theme}
+                    shape={display.shape}
+                    codes={display.codes}
+                    tool={tool}
+                    onEdit={onEdit}
+                    onPickColor={setHighlightId}
+                    fit
+                    zoom={fullscreen ? 1 : zoom}
+                    onZoom={zoomBy}
+                  />
+                </div>
+              ) : (
+                <div className="empty">
+                  {ownedEmpty
+                    ? "No colours selected — pick the beads you own."
+                    : pattern
+                      ? "Everything was removed. Try lowering the background tolerance or turning off background removal."
+                      : "Building your pattern…"}
+                </div>
+              )}
+              {handEditCount > 0 && (
+                <div className="edited">
+                  <span>
+                    {handEditCount} bead{handEditCount === 1 ? "" : "s"} edited by hand
                   </span>
-                )}
-              </h2>
-              <div className="actions">
-                <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} canShowOriginal={!!image} />
-                <button className="btn btn-ghost" disabled={!pattern?.total} onClick={enterFullscreen} title="View and edit fullscreen">
-                  ⤢ Fullscreen
-                </button>
-                <button
-                  className={`btn ${tool ? "btn-primary" : "btn-ghost"}`}
-                  aria-pressed={!!tool}
-                  disabled={!pattern}
-                  onClick={() => setTool(tool ? null : "paint")}
-                >
-                  {tool ? "Done editing" : "Edit beads"}
-                </button>
-                <button className="btn btn-primary" disabled={!pattern?.total} onClick={() => setExportOpen(true)}>
-                  Export
-                </button>
-              </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="welcome">
+              <h1>Turn any image into a bead pattern</h1>
+              <p className="muted">Pick a photo or drawing, choose your beads and board size, and get a printable pattern with a shopping list.</p>
+              <Dropzone onFile={onFile} />
+              <button className="btn btn-ghost" onClick={() => void sampleImage()}>
+                Try a sample image
+              </button>
+              <p className="muted small">Your image never leaves your browser.</p>
             </div>
-            {tool && pattern && !fullscreen && editBar}
-            {pattern && pattern.total > 0 ? (
-              <div className={`compare ${showOriginal ? "with-original" : ""}`}>
-                {showOriginal && !fullscreen && image && (
-                  <OriginalView image={image} crop={crop} onHide={() => setDisplay({ ...display, original: false })} />
-                )}
-                <PatternView
-                  pattern={pattern}
-                  boardSize={boardSize}
-                  showBoards={showBoards}
-                  highlightId={highlightId}
-                  theme={theme}
-                  shape={display.shape}
-                  codes={display.codes}
-                  tool={tool}
-                  onEdit={onEdit}
-                  onPickColor={setHighlightId}
-                />
-              </div>
-            ) : (
-              <div className="empty">
-                {ownedEmpty
-                  ? "No colours selected — pick the beads you own."
-                  : pattern
-                    ? "Everything was removed. Try lowering the background tolerance or turning off background removal."
-                    : "Your pattern appears here."}
-              </div>
-            )}
-            {handEditCount > 0 && (
-              <div className="edited">
-                <span>
-                  {handEditCount} bead{handEditCount === 1 ? "" : "s"} edited by hand
-                </span>
-              </div>
-            )}
+          )}
+        </section>
+
+        {/* Shopping list */}
+        <aside className="panel beads-panel" aria-label="Shopping list">
+          <div className="panel-scroll">
+            <BeadList
+              pattern={pattern}
+              highlightId={highlightId}
+              onHighlight={setHighlightId}
+              onSwap={(c) => setModal({ kind: "swap", from: c })}
+              onRemove={(c) => guardEdits(() => removeColor(c))}
+              canRemove={(pattern?.colors.length ?? 0) > 1}
+            />
+          </div>
+          <div className="panel-foot">
             {edited && (
               <div className="edited">
                 <span>
@@ -1015,22 +1058,15 @@ export function App() {
                 </button>
               </div>
             )}
+            <button className="btn btn-primary full" disabled={!pattern?.total} onClick={() => setExportOpen(true)}>
+              Export
+            </button>
+            <p className="footnote">
+              Colours on screen are approximate — check against your actual beads. Colour data from maxcleme/beadcolors (MIT). Images are processed locally and never uploaded.
+            </p>
           </div>
-
-          <BeadList
-            pattern={pattern}
-            highlightId={highlightId}
-            onHighlight={setHighlightId}
-            onSwap={(c) => setModal({ kind: "swap", from: c })}
-            onRemove={(c) => guardEdits(() => removeColor(c))}
-            canRemove={(pattern?.colors.length ?? 0) > 1}
-          />
-        </section>
+        </aside>
       </main>
-
-      <footer className="footer muted small">
-        Colours on screen are approximate — check against your actual beads. Colour data from maxcleme/beadcolors (MIT). Images are processed locally and never uploaded.
-      </footer>
 
       {fullscreen && pattern && (
         <div className="fullscreen" role="dialog" aria-modal="true" aria-label="Fullscreen pattern">

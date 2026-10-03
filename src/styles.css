@@ -6,7 +6,7 @@
   --surface-2: #2a2635;
   --surface-hover: #312c3e;
   --ink: #f1eef6;
-  --muted: #a19cae;
+  --muted: #b1acbe;
   --line: #34303f;
   --accent: #ff6b88;
   --accent-ink: #ffffff;
@@ -25,7 +25,8 @@
   --board-bg: #1a1822;
   --peg: #2f2b39;
   --board-line: rgba(255, 255, 255, 0.55);
-  --radius: 16px;
+  --radius: 14px;
+  --topbar-h: 52px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
   color-scheme: dark;
 }
@@ -37,7 +38,7 @@
   --surface-2: #f3eee7;
   --surface-hover: #f6f1ea;
   --ink: #1d1b26;
-  --muted: #6c6878;
+  --muted: #5f5a6c;
   --line: #ebe5dc;
   --accent: #ff5c7a;
   --accent-soft: #ffe3e9;
@@ -56,21 +57,6 @@
   --board-line: rgba(40, 30, 70, 0.55);
   --shadow: 0 1px 2px rgba(30, 20, 50, 0.05), 0 8px 24px rgba(30, 20, 50, 0.06);
   color-scheme: light;
-}
-
-.theme-btn {
-  border: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 * {
@@ -115,29 +101,7 @@ button:disabled {
   font-size: 13px;
 }
 
-.app {
-  max-width: 1680px;
-  margin: 0 auto;
-  padding: 0 12px 24px;
-}
-
 /* Top bar */
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 800;
-  font-size: 18px;
-}
-
 .logo {
   display: grid;
   grid-template-columns: repeat(2, 11px);
@@ -155,80 +119,8 @@ button:disabled {
 .logo i:nth-child(3) { background: #5cc8ff; }
 .logo i:nth-child(4) { background: #7ad67a; }
 
-.hero {
-  text-align: center;
-  padding: 8px 0 16px;
-}
-
-.hero h1 {
-  font-size: clamp(28px, 5vw, 44px);
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-.hero p {
-  color: var(--muted);
-  max-width: 560px;
-  margin: 10px auto 0;
-}
-
 /* Layout */
-.layout {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-}
 
-@media (max-width: 860px) {
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 14px;
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.card-head h2 {
-  font-size: 18px;
-  font-weight: 800;
-}
-
-.controls {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-@media (min-width: 861px) {
-  .controls {
-    position: sticky;
-    top: 16px;
-    max-height: calc(100vh - 32px);
-    overflow-y: auto;
-  }
-}
-
-.preview-col {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  min-width: 0;
-}
 
 /* Dropzone */
 .dropzone {
@@ -543,27 +435,6 @@ input[type="range"] {
   border: 1px solid rgba(0, 0, 0, 0.15);
 }
 
-.empty {
-  border: 2px dashed var(--line);
-  border-radius: 12px;
-  min-height: 300px;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  text-align: center;
-  padding: 16px;
-  background: radial-gradient(circle, var(--dots) 2px, transparent 2.5px) 0 0 / 18px 18px;
-}
-
-.edited {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
 /* Bead list */
 .bead-list ul {
   list-style: none;
@@ -708,11 +579,6 @@ input[type="range"] {
   white-space: nowrap;
 }
 
-.footer {
-  text-align: center;
-  margin-top: 32px;
-}
-
 .sr-only {
   position: absolute;
   width: 1px;
@@ -813,41 +679,6 @@ input[type="range"] {
   gap: 10px;
 }
 
-.section {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-}
-
-.section > summary {
-  font-weight: 800;
-  cursor: pointer;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.section > summary::-webkit-details-marker {
-  display: none;
-}
-
-.section > summary::after {
-  content: "▾";
-  color: var(--muted);
-  transition: transform 0.15s;
-}
-
-.section:not([open]) > summary::after {
-  transform: rotate(-90deg);
-}
-
-.section-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-top: 12px;
-}
-
 .field-label {
   font-weight: 700;
 }
@@ -938,9 +769,6 @@ input[type="range"] {
     height: 32px;
   }
 
-  .section > summary {
-    min-height: 40px;
-  }
 
   .slider {
     grid-template-columns: 82px 1fr 40px;
@@ -950,10 +778,6 @@ input[type="range"] {
 
 /* Narrow screens: give the pattern toolbar its own full-width row. */
 @media (max-width: 600px) {
-  .preview .card-head .actions {
-    width: 100%;
-    justify-content: space-between;
-  }
 
   .edit-bar .btn {
     flex: 1 1 auto;
@@ -988,10 +812,6 @@ input[type="range"] {
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
-}
-
-.theme-btn:disabled {
-  opacity: 0.45;
 }
 
 .projects-modal {
@@ -1161,23 +981,6 @@ input[type="range"] {
 
 .fullscreen .edit-bar {
   margin-bottom: 0;
-}
-
-.zoom {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.zoom .btn {
-  padding: 6px 12px;
-}
-
-.zoom-level {
-  min-width: 48px;
-  text-align: center;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
 }
 
 .pattern-view.is-fullscreen {
@@ -1467,14 +1270,6 @@ input[type="range"] {
 
 .slider {
   grid-template-columns: 76px minmax(0, 1fr) 36px;
-}
-
-.pattern-size {
-  margin-left: 10px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 
 /* Auto suggestions */
@@ -1958,11 +1753,573 @@ input[type="range"] {
   min-height: 160px;
 }
 
-.results-row {
-  gap: 8px;
-  margin-top: -6px;
+
+/* ================================================================= App shell
+ * Top bar, then a full-height workspace: settings | pattern | beads.
+ * Wide screens: three columns, nothing scrolls but the panels.
+ * Medium: settings | pattern, with the bead list under the pattern.
+ * Phones: one column, the pattern pinned at the top while you scroll the settings.
+ */
+.app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
-.results-row .btn {
+.topbar {
+  height: var(--topbar-h);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.project-status {
+  font-size: 14px;
+  color: var(--muted);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.project-status:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Quiet top-bar actions: text buttons that show a surface on hover. */
+.top-btn {
+  border: none;
+  background: none;
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.top-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.top-btn.icon {
+  font-size: 17px;
+  width: 36px;
+  padding: 6px 0;
+}
+
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 290px;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "settings stage beads";
+}
+
+/* Wide screens: the app is exactly the window; only the panels and the pattern scroll. */
+@media (min-width: 1280px) {
+  .app {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+}
+
+.panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+}
+
+.settings-panel {
+  grid-area: settings;
+  border-right: 1px solid var(--line);
+}
+
+.beads-panel {
+  grid-area: beads;
+  border-left: 1px solid var(--line);
+}
+
+.panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel-foot {
+  flex: none;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.panel-head h2 {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.panel-intro {
+  margin: 0;
+}
+
+.footnote {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* Settings tabs */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.tabs button {
+  flex: 1;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  padding: 7px 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tabs button.on {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tab-panel:not(.active) {
+  display: none;
+}
+
+/* Settings groups inside a tab */
+.image-options {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.section-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field label,
+.field-label {
+  font-size: 14px;
+}
+
+/* Auto: one entry point, with results and bookmarking beside it. */
+.btn-auto {
+  background: var(--accent-soft);
+  color: var(--link);
+  border: 1px solid transparent;
+}
+
+.btn-auto:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.results-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+
+.btn-quiet {
   flex: 1 1 auto;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/* Pattern stage */
+.stage {
+  grid-area: stage;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.stage-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+}
+
+.stage-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-right: auto;
+}
+
+.stage-title h2 {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.pattern-size {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-controls,
+.stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stage-canvas {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+/* Zoom floats over the pattern's bottom-right corner (above the status line). */
+.zoom.floating {
+  position: absolute;
+  right: 10px;
+  bottom: 36px;
+  z-index: 2;
+  box-shadow: var(--shadow);
+}
+
+.stage-canvas > .pattern-view {
+  flex: 1;
+  min-width: 0;
+}
+
+.stage .edit-bar {
+  margin-bottom: 0;
+}
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.zoom .btn {
+  padding: 6px 12px;
+}
+
+.zoom-level {
+  min-width: 52px;
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+button.zoom-level:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+button.zoom-level:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.empty {
+  flex: 1;
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+  padding: 16px;
+  background: radial-gradient(circle, var(--dots) 2px, transparent 2.5px) 0 0 / 18px 18px;
+}
+
+.edited {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* First visit: the stage is a welcome + drop zone. */
+.welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 24px 12px;
+  border-radius: var(--radius);
+  background: radial-gradient(circle, var(--dots) 2px, transparent 2.5px) 0 0 / 18px 18px;
+}
+
+.welcome h1 {
+  font-size: clamp(26px, 3.4vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.welcome > p {
+  margin: 0;
+  max-width: 520px;
+}
+
+.welcome .dropzone {
+  width: min(460px, 100%);
+  padding: 40px 16px;
+}
+
+/* Bead list in its panel: one column, compact rows. */
+.bead-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bead-list > p {
+  margin: 0;
+}
+
+.bead-list ul {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.bead-row {
+  padding: 5px 6px;
+  gap: 8px;
+}
+
+.bead-list .swatch {
+  width: 22px;
+  height: 22px;
+}
+
+.bead-list .icon-btn {
+  width: 26px;
+  height: 26px;
+  font-size: 15px;
+}
+
+/* Medium screens: settings | pattern; bead list under the pattern. */
+@media (max-width: 1279px) {
+  .workspace {
+    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-areas:
+      "settings stage"
+      "settings beads";
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .settings-panel {
+    position: sticky;
+    top: 0;
+    height: calc(100dvh - var(--topbar-h));
+    grid-row: 1 / span 2;
+  }
+
+  .stage {
+    height: calc(100dvh - var(--topbar-h) - 24px);
+    min-height: 420px;
+  }
+
+  .beads-panel {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
+  .beads-panel .panel-scroll {
+    overflow: visible;
+  }
+
+  .bead-list ul {
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    column-gap: 16px;
+  }
+
+  .beads-panel .panel-foot {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .beads-panel .panel-foot .btn {
+    width: auto;
+    padding-left: 28px;
+    padding-right: 28px;
+  }
+
+  .beads-panel .footnote {
+    flex: 1 1 260px;
+    order: -1;
+  }
+}
+
+/* Phones: pattern pinned on top, then settings, then the bead list. */
+@media (max-width: 860px) {
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .brand-name,
+  .project-status-name {
+    display: none;
+  }
+
+  .top-btn {
+    padding: 7px 8px;
+  }
+
+  .workspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stage {
+    order: -1;
+    position: sticky;
+    top: var(--topbar-h);
+    z-index: 4;
+    height: auto;
+    min-height: 0;
+    max-height: 56dvh;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .stage-canvas {
+    height: 34dvh;
+    flex: none;
+  }
+
+  .stage-bar {
+    gap: 6px 10px;
+  }
+
+  .stage-controls {
+    order: 3;
+    width: 100%;
+  }
+
+  .stage .welcome {
+    padding: 12px 6px;
+  }
+
+  .stage .welcome .dropzone {
+    padding: 22px 12px;
+  }
+
+  .settings-panel {
+    position: static;
+    height: auto;
+    border-right: none;
+  }
+
+  .settings-panel .panel-scroll {
+    overflow: visible;
+  }
+
+  /* Without an image there's nothing to pin: the welcome scrolls away normally. */
+  .stage:has(.welcome) {
+    position: static;
+    max-height: none;
+  }
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../App";
 import { DEFAULT_EXPORT, type ExportSettings } from "../lib/export";
-import { contextOf } from "../test/canvas-mock";
+import { contextOf, mockPixels } from "../test/canvas-mock";
 import { checker, makePattern } from "../test/fixtures";
 import { ExportDialog } from "./ExportDialog";
 import { PatternView } from "./PatternView";
@@ -138,16 +138,32 @@ describe("ExportDialog", () => {
 });
 
 describe("App", () => {
-  test("starts with the expected defaults", () => {
+  const loadSample = async () => {
+    mockPixels((w, h) => {
+      const d = new Uint8ClampedArray(w * h * 4);
+      for (let i = 0; i < w * h; i++) d.set(i % 3 ? [210, 40, 50, 255] : [40, 90, 200, 255], i * 4);
+      return d;
+    });
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(document.querySelector(".pattern-canvas")).toBeTruthy());
+  };
+
+  test("starts with the expected defaults", async () => {
     render(<App />);
+    // First visit: a welcome in place of the pattern, settings ready.
     expect(screen.getByRole("heading", { name: "Turn any image into a bead pattern" })).toBeTruthy();
     expect((screen.getByLabelText("Beads") as HTMLSelectElement).value).toBe("mard-221");
     expect(screen.getByText("52").className).toBe("on");
+    expect((screen.getByText("Export") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("Codes") === null).toBe(true); // no view controls until there's a pattern
+    expect(document.documentElement.dataset.theme).toBe("dark");
+
+    await loadSample();
+    expect(screen.queryByRole("heading", { name: "Turn any image into a bead pattern" }) === null).toBe(true);
     expect((screen.getByLabelText("Board lines") as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText("Codes") as HTMLInputElement).checked).toBe(false);
     expect(screen.getByRole("radio", { name: "Square" }).getAttribute("aria-checked")).toBe("true");
-    expect((screen.getByText("Export") as HTMLButtonElement).disabled).toBe(true);
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect((screen.getByText("Export") as HTMLButtonElement).disabled).toBe(false);
   });
 
   test("never mentions a bead size", () => {
@@ -163,12 +179,14 @@ describe("App", () => {
     expect(screen.getByText("Dark mode")).toBeTruthy();
   });
 
-  test("display settings are remembered", () => {
+  test("display settings are remembered", async () => {
     const { unmount } = render(<App />);
+    await loadSample();
     fireEvent.click(screen.getByLabelText("Codes"));
     fireEvent.click(screen.getByRole("radio", { name: "Bead" }));
     unmount();
     render(<App />);
+    await loadSample();
     expect((screen.getByLabelText("Codes") as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("radio", { name: "Bead" }).getAttribute("aria-checked")).toBe("true");
   });

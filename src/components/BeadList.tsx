@@ -14,18 +14,18 @@ export function BeadList({ pattern, highlightId, onHighlight, onSwap, onRemove, 
   const total = pattern?.total ?? 0;
   const count = pattern?.colors.length ?? 0;
   return (
-    <section className="card bead-list">
-      <div className="card-head">
+    <section className="bead-list" aria-label="Beads to buy">
+      <div className="panel-head">
         <h2>Beads to buy</h2>
         <span className="pill">
           {total.toLocaleString()} beads · {count} colour{count === 1 ? "" : "s"}
         </span>
       </div>
       {!pattern || count === 0 ? (
-        <p className="muted">Add an image and your shopping list shows up here.</p>
+        <p className="muted small">Add an image and your shopping list shows up here.</p>
       ) : (
         <>
-          <p className="muted small">Click a colour to find it on the pattern. Swap or remove colours to tidy things up.</p>
+          <p className="muted small">Click a colour to find it on the pattern. ⇄ swaps it, × removes it.</p>
           <ul>
             {pattern.colors.map((c, i) => (
               <li key={c.id} className={highlightId === c.id ? "active" : ""}>

@@ -20,6 +20,8 @@ interface Props {
    * Drag pans, pinch / Ctrl+wheel call `onZoom` with a scale factor.
    */
   fullscreen?: boolean;
+  /** Fit-and-zoom like the fullscreen viewer, inside the page (the main workspace). */
+  fit?: boolean;
   zoom?: number;
   onZoom?: (factor: number) => void;
 }
@@ -50,10 +52,13 @@ export function PatternView({
   codes,
   tool,
   onEdit,
-  fullscreen = false,
+  fullscreen: fullscreenProp = false,
+  fit = false,
   zoom = 1,
   onZoom,
 }: Props) {
+  // Both the fullscreen viewer and the workspace fit the pattern to the box and zoom from there.
+  const fullscreen = fullscreenProp || fit;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [wrap, setWrap] = useState({ w: 600, h: 400 });

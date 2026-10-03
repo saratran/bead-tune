@@ -130,7 +130,7 @@ describe("fullscreen in the app", () => {
   async function openFullscreen() {
     mockPixels(redSquare);
     const utils = render(<App />);
-    expect((screen.getByText(/Fullscreen/) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText(/Fullscreen/) === null).toBe(true); // not offered before there's a pattern
     fireEvent.click(screen.getByText("Try a sample image"));
     await waitFor(() => expect(utils.container.querySelector(".pattern-canvas")).toBeTruthy());
     fireEvent.click(screen.getByText(/Fullscreen/));

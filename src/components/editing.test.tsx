@@ -166,7 +166,7 @@ describe("App with an image", () => {
   const pill = () => screen.getByText(/beads · \d+ colours?$/).textContent;
   const canvas = (c: HTMLElement) => c.querySelector(".pattern-canvas")!;
   // 52 beads wide in a 600px view → 11.54px cells.
-  const cellPx = 600 / 52;
+  const cellPx = 400 / 52; // the pattern is fitted into the 600 × 400 test box
   const at = (x: number, y: number) => ({ clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });
 
   test("builds a pattern from the image", async () => {
@@ -291,7 +291,7 @@ describe("outline as an edit", () => {
     return data;
   };
   const darkest = mard.reduce((a, b) => (b.lab[0] < a.lab[0] ? b : a));
-  const cellPx = 600 / 52;
+  const cellPx = 400 / 52; // the pattern is fitted into the 600 × 400 test box
   const at = (x: number, y: number) => ({ clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });
   const canvas = () => document.querySelector(".pattern-canvas")!;
   /** The colour code under a cell, via the hover status line. */
@@ -388,7 +388,7 @@ describe("outline as an edit", () => {
     expect(outlineCount()).toBe(n);
     expect(screen.getByText(`${n + 1} beads edited by hand`)).toBeTruthy();
     // Cells are 600/54 px now.
-    const at54 = (cx: number, cy: number) => ({ clientX: (cx + 0.5) * (600 / 54), clientY: (cy + 0.5) * (600 / 54), pointerId: 1 });
+    const at54 = (cx: number, cy: number) => ({ clientX: (cx + 0.5) * (400 / 54), clientY: (cy + 0.5) * (400 / 54), pointerId: 1 });
     const code54 = (cx: number, cy: number) => {
       fireEvent.mouseMove(canvas(), at54(cx, cy));
       const text = document.querySelector(".pattern-status")!.textContent!;
@@ -431,7 +431,7 @@ describe("warning before settings change hand edits", () => {
     return data;
   };
   const prompt = () => screen.queryByRole("alertdialog", { name: "Hand edits may be lost" });
-  const cellPx = 600 / 52;
+  const cellPx = 400 / 52; // the pattern is fitted into the 600 × 400 test box
   const erase = (x: number, y: number) => {
     const c = document.querySelector(".pattern-canvas")!;
     fireEvent.pointerDown(c, { clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });

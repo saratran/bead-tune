@@ -18,7 +18,7 @@ const redSquare = (w: number, h: number) => {
 };
 
 const pill = () => screen.getByText(/beads · \d+ colours?$/).textContent;
-const cellPx = 600 / 52;
+const cellPx = 400 / 52; // the pattern is fitted into the 600 × 400 test box
 const at = (x: number, y: number) => ({ clientX: (x + 0.5) * cellPx, clientY: (y + 0.5) * cellPx, pointerId: 1 });
 
 async function loadSample() {
