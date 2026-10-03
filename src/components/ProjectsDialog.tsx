@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fuzzyScore, groupVersions, nextVersionName, versionBase, type ProjectLocation, type ProjectMeta } from "../lib/projects";
+import { download, parseProjectFile, PROJECT_FILE_EXT, projectFileName, toProjectFile } from "../lib/projectFile";
 import { localStore, serverAvailable, storeFor } from "../lib/projectStores";
 
 export interface OpenProject {
@@ -47,6 +48,8 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   // Version groups showing their older versions, by "location:base name".
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggleGroup = (key: string) =>
@@ -143,6 +146,25 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
       await refresh();
     });
 
+  /** Downloads the project as a .beadtune file (image, settings, edits, bookmarks, build progress). */
+  const exportProject = (p: ProjectMeta) =>
+    run(async () => {
+      const image = await storeFor(p.location).loadImage(p.id);
+      if (!image) throw new Error("That project's image is missing.");
+      download(await toProjectFile({ name: p.name, imageName: p.imageName, thumbnail: p.thumbnail, state: p.state, image }), projectFileName(p.name));
+      setNote(`Exported “${p.name}”`);
+    });
+
+  /** Adds a .beadtune file to the list (where "Save to" points, else this browser). */
+  const importProject = (file: File) =>
+    run(async () => {
+      const data = await parseProjectFile(file);
+      const to = serverOk && target === "server" ? "server" : "local";
+      await storeFor(to).save(data);
+      await refresh();
+      setNote(`Imported “${data.name}” — open it from the list`);
+    });
+
   const renderItem = (p: ProjectMeta, location: ProjectLocation, versions?: { more: number; open: boolean; onToggle: () => void }) => {
     const key = `${location}:${p.id}`;
     const isCurrent = current?.id === p.id && current.location === location;
@@ -213,6 +235,9 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
               </button>
               <button className="btn btn-ghost" disabled={busy} onClick={() => setRenaming({ id: p.id, location, name: p.name })}>
                 Rename
+              </button>
+              <button className="btn btn-ghost" disabled={busy} onClick={() => void exportProject(p)} title={`Download as a ${PROJECT_FILE_EXT} file, to keep or open elsewhere`}>
+                Export
               </button>
               {location === "local" && serverOk && (
                 <button className="btn btn-ghost" disabled={busy} onClick={() => void copy(p, "server")}>
@@ -336,6 +361,28 @@ export function ProjectsDialog({ current, canSave, defaultName, mode = "save", o
         </form>
 
         <div className="project-list">
+          <div className="row project-import">
+            <button className="btn btn-ghost" disabled={busy} onClick={() => importInput.current?.click()} title={`Add a project from a ${PROJECT_FILE_EXT} file`}>
+              Import project…
+            </button>
+            <input
+              ref={importInput}
+              type="file"
+              accept={`${PROJECT_FILE_EXT},application/json`}
+              hidden
+              aria-label="Import project file"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void importProject(file);
+              }}
+            />
+            {note && (
+              <span className="small muted" role="status">
+                {note}
+              </span>
+            )}
+          </div>
           {[...(lists.local ?? []), ...(lists.server ?? [])].length > 1 && (
             <input
               type="search"

@@ -2557,3 +2557,7 @@ button.zoom-level:hover:not(:disabled) {
 .tool-icon {
   flex: none;
 }
+
+.project-import {
+  margin-bottom: 12px;
+}

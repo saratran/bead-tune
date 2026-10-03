@@ -27,7 +27,7 @@ Everything runs in your browser: images are never uploaded.
 - **Build mode** — one pegboard at a time: pick a colour to see only its beads, tick beads off
   as you place them, progress saved with the project.
 - **Projects** — save, reopen, version (“Save as…”) and search projects in the browser, or on
-  your own server when self-hosted with it.
+  your own server when self-hosted with it; export / import a project as a `.beadtune` file.
 - **Export** — PNG or PDF (one page per pegboard), with colour codes, grid, coordinates and a
   bead count.
 - Works on phones; dark and light themes.

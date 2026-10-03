@@ -256,6 +256,43 @@ describe("projects in the app", () => {
     expect(screen.queryByTitle("Saved") === null).toBe(true);
   });
 
+  test("export a project to a file, then import it again", async () => {
+    // Capture the download instead of saving a file.
+    let saved: Blob | null = null;
+    let savedName = "";
+    const origCreate = URL.createObjectURL;
+    URL.createObjectURL = ((b: Blob) => ((saved = b), "blob:test")) as typeof URL.createObjectURL;
+    const origClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      savedName = this.download;
+    };
+    try {
+      await loadSample();
+      await saveAs("Travelling berry");
+      const row = () => within(dialog()).getByText("Travelling berry").closest("li")!;
+      fireEvent.click(within(row()).getByRole("button", { name: "Export" }));
+      await waitFor(() => expect(saved).not.toBeNull());
+      expect(savedName).toBe("Travelling berry.beadtune");
+      expect(within(dialog()).getByText("Exported “Travelling berry”")).toBeTruthy();
+
+      // Delete it, then bring it back from the file.
+      fireEvent.click(within(row()).getByRole("button", { name: "Delete" }));
+      fireEvent.click(within(row()).getByRole("button", { name: "Delete" }));
+      await waitFor(() => expect(within(dialog()).queryByText("Travelling berry") === null).toBe(true));
+      const file = new File([saved!], "Travelling berry.beadtune", { type: "application/json" });
+      fireEvent.change(within(dialog()).getByLabelText("Import project file"), { target: { files: [file] } });
+      await waitFor(() => expect(within(dialog()).getByText("Travelling berry")).toBeTruthy());
+      expect(within(dialog()).getByText(/Imported “Travelling berry”/)).toBeTruthy();
+
+      // A file that isn't a project is refused.
+      fireEvent.change(within(dialog()).getByLabelText("Import project file"), { target: { files: [new File(["{}"], "x.beadtune")] } });
+      await waitFor(() => expect(within(dialog()).getByText("That isn't a BeadTune project file.")).toBeTruthy());
+    } finally {
+      URL.createObjectURL = origCreate;
+      HTMLAnchorElement.prototype.click = origClick;
+    }
+  });
+
   test("a new image starts a new unsaved project", async () => {
     await loadSample();
     await saveAs("Berry");
