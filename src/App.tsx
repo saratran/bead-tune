@@ -12,7 +12,7 @@ import { imageFingerprint, loadBookmarks, mergeBookmarks, sameCandidate, saveBoo
 import { OriginalView } from "./components/OriginalView";
 import { cropPixels, isFullCrop } from "./lib/crop";
 import { applyEdits, outlineRing, padPattern, shiftEdits, type Edits } from "./lib/cleanup";
-import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, type BeadColor } from "./lib/palettes";
+import { brandIdOf, brandsForSize, colorLabel, DEFAULT_BRAND_ID, getBrand, parseBrandId, SIZES, sourcesOf, type BeadColor, type BrandChoice } from "./lib/palettes";
 import { applySwaps, type Pattern } from "./lib/pattern";
 import { buildPattern, type PipelineSettings } from "./lib/pipeline";
 import { requestPersistentStorage, type ProjectLocation, type ProjectMeta, type ProjectState } from "./lib/projects";
@@ -179,7 +179,10 @@ export function App() {
   const [brush, setBrush] = useState<BeadColor | null>(null);
 
   const brand = getBrand(brandId);
-  const ownedSet = useMemo(() => new Set(owned[brand.source] ?? []), [owned, brand.source]);
+  // "Colours I have" is kept per chart; a mix of brands uses all of theirs.
+  const ownedSet = useMemo(() => new Set(sourcesOf(brand).flatMap((src) => owned[src] ?? [])), [owned, brand]);
+  const choice = useMemo(() => parseBrandId(brandId), [brandId]);
+  const setChoice = (c: BrandChoice) => guardEdits(() => changeBrand(brandIdOf(c)));
 
   const resetEdits = useCallback(() => {
     setExcluded(new Set());
@@ -763,6 +766,9 @@ export function App() {
   };
 
   const edited = excluded.size > 0 || swaps.size > 0;
+  // Other brands of this size that can be mixed in (not another preset of the main brand's chart).
+  const mainSource = getBrand(choice.ids[0]!).source;
+  const mixable = brandsForSize(choice.size).filter((b) => b.id !== choice.ids[0] && b.source !== mainSource);
   const ownedEmpty = ownedOnly && ownedSet.size === 0;
 
   const resultsCount = (autoResults?.key === autoKey ? autoResults.list.length : 0) + bookmarks.length;
@@ -860,22 +866,60 @@ export function App() {
             {/* All tabs stay mounted (hidden with CSS) so their state survives switching. */}
             <div className={`tab-panel ${settingsTab === "setup" ? "active" : ""}`}>
               <div className="field">
+                <span className="field-label">Bead size</span>
+                <div className="segmented" role="radiogroup" aria-label="Bead size">
+                  {SIZES.map((sz) => (
+                    <button
+                      key={sz.id}
+                      role="radio"
+                      aria-checked={choice.size === sz.id}
+                      className={choice.size === sz.id ? "on" : ""}
+                      onClick={() => {
+                        if (sz.id === choice.size) return;
+                        const avail = brandsForSize(sz.id);
+                        const kept = choice.ids.filter((id) => avail.some((b) => b.id === id));
+                        setChoice({ size: sz.id, ids: kept.length ? kept : [avail[0]!.id] });
+                      }}
+                    >
+                      {sz.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="field">
                 <label htmlFor="brand">Beads</label>
                 <select
                   id="brand"
                   className="input"
-                  value={brandId}
+                  value={choice.ids[0]}
                   onChange={(e) => {
-                    const id = e.target.value;
-                    guardEdits(() => changeBrand(id));
+                    const main = e.target.value;
+                    setChoice({ size: choice.size, ids: [main, ...choice.ids.slice(1).filter((x) => x !== main)] });
                   }}
                 >
-                  {BRANDS.map((b) => (
+                  {brandsForSize(choice.size).map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
                   ))}
                 </select>
+                {mixable.length > 0 && (
+                  <details className="mix-brands" open={choice.ids.length > 1}>
+                    <summary>
+                      Mix in other brands{choice.ids.length > 1 ? ` (${choice.ids.length - 1})` : ""}
+                    </summary>
+                    <p className="hint">Beads of the same size from different brands fuse together. Mixed colours show their brand in the list.</p>
+                    {mixable.map((b) => (
+                      <Toggle
+                        key={b.id}
+                        label={b.name}
+                        checked={choice.ids.includes(b.id)}
+                        onChange={(on) => setChoice({ size: choice.size, ids: on ? [...choice.ids, b.id] : choice.ids.filter((x) => x !== b.id) })}
+                      />
+                    ))}
+                  </details>
+                )}
               </div>
 
               <div className="field">
@@ -1060,6 +1104,7 @@ export function App() {
               onSwap={(c) => setModal({ kind: "swap", from: c })}
               onRemove={(c) => guardEdits(() => removeColor(c))}
               canRemove={(pattern?.colors.length ?? 0) > 1}
+              showBrand={sourcesOf(brand).length > 1}
             />
           </div>
           <div className="panel-foot">
@@ -1249,7 +1294,9 @@ export function App() {
           colors={brand.colors}
           selected={ownedSet}
           onChange={(s) => {
-            const next = { ...owned, [brand.source]: [...s] };
+            // Stored per chart: colour ids start with their chart ("hama:H01").
+            const next = { ...owned };
+            for (const src of sourcesOf(brand)) next[src] = [...s].filter((id) => id.startsWith(`${src}:`));
             setOwned(next);
             saveOwned(next);
           }}

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { hexToRgb } from "./color";
-import { BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand } from "./palettes";
+import { brandIdOf, brandsForSize, BRANDS, colorLabel, DEFAULT_BRAND_ID, getBrand, parseBrandId, sourcesOf } from "./palettes";
 
 const brand = (id: string) => BRANDS.find((b) => b.id === id)!;
 
 describe("presets", () => {
   test("defaults to MARD 221", () => {
     expect(DEFAULT_BRAND_ID).toBe("mard-221");
-    expect(getBrand(DEFAULT_BRAND_ID).name).toBe("MARD 221 (A–M)");
+    expect(getBrand(DEFAULT_BRAND_ID).name).toBe("MARD A–M (221)");
   });
 
   test("MARD 221 is exactly the A–M series of MARD 291", () => {
@@ -30,8 +30,8 @@ describe("presets", () => {
     expect(brand("perler").source).not.toBe(brand("mard-221").source);
   });
 
-  test("names don't mention a bead size", () => {
-    for (const b of BRANDS) expect(b.name).not.toMatch(/\dmm/i);
+  test("brand names don't repeat the size (it's chosen separately)", () => {
+    for (const b of BRANDS) expect(b.name).not.toMatch(/\d\s?mm/i);
   });
 
   test("getBrand falls back to the first preset", () => {
@@ -66,4 +66,34 @@ test("colorLabel shows code alone when there is no name", () => {
   expect(colorLabel(a1)).toBe("A1");
   const white = brand("perler").colors.find((c) => c.name === "White")!;
   expect(colorLabel(white)).toBe(`${white.code} White`);
+});
+
+describe("sizes and mixing brands", () => {
+  test("every chart has a size, and the sizes have the expected brands", () => {
+    for (const b of BRANDS) expect(b.sizes.length).toBeGreaterThan(0);
+    expect(brandsForSize("5mm").map((b) => b.id)).toEqual(["mard-221", "mard-291", "perler", "hama", "artkal-s", "artkal-r", "nabbi"]);
+    expect(brandsForSize("2.6mm").map((b) => b.id)).toEqual(["mard-221", "mard-291", "perler-mini", "hama-mini", "artkal-a", "artkal-c", "artkal-m"]);
+    expect(brandsForSize("10mm").map((b) => b.id)).toEqual(["hama-maxi"]);
+  });
+
+  test("older ids still work; a mix combines the colours of its brands", () => {
+    expect(parseBrandId("perler")).toEqual({ size: "5mm", ids: ["perler"] });
+    expect(parseBrandId("hama-mini")).toEqual({ size: "2.6mm", ids: ["hama-mini"] });
+    const id = brandIdOf({ size: "5mm", ids: ["mard-221", "hama"] });
+    expect(id).toBe("5mm:mard-221+hama");
+    const mix = getBrand(id);
+    expect(mix.colors.length).toBe(getBrand("mard-221").colors.length + getBrand("hama").colors.length);
+    expect(sourcesOf(mix)).toEqual(["mard", "hama"]);
+    expect(new Set(mix.colors.map((c) => c.brand))).toEqual(new Set(["MARD", "Hama"]));
+  });
+
+  test("a single brand in its usual size keeps its plain id; another size is spelled out", () => {
+    expect(brandIdOf({ size: "5mm", ids: ["mard-221"] })).toBe("mard-221");
+    expect(brandIdOf({ size: "2.6mm", ids: ["mard-221"] })).toBe("2.6mm:mard-221");
+    expect(parseBrandId("2.6mm:mard-221")).toEqual({ size: "2.6mm", ids: ["mard-221"] });
+  });
+
+  test("brands of another size are dropped from a mix", () => {
+    expect(parseBrandId("5mm:perler+hama-mini").ids).toEqual(["perler"]);
+  });
 });

@@ -166,9 +166,24 @@ describe("App", () => {
     expect((screen.getByText("Export") as HTMLButtonElement).disabled).toBe(false);
   });
 
-  test("never mentions a bead size", () => {
+  test("bead sizes only appear in the size choice (it works for any size)", () => {
     const { container } = render(<App />);
-    expect(container.textContent).not.toMatch(/\d\s?mm/i);
+    expect(screen.getByRole("radio", { name: "Midi 5 mm" }).getAttribute("aria-checked")).toBe("true");
+    const rest = container.cloneNode(true) as HTMLElement;
+    rest.querySelector('[aria-label="Bead size"]')!.remove();
+    expect(rest.textContent).not.toMatch(/\d\s?mm/i);
+  });
+
+  test("mixing brands of one size; switching size keeps only brands that come in it", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByText(/Mix in other brands/));
+    fireEvent.click(screen.getByLabelText("Hama Midi (92)"));
+    expect(screen.getByText("Mix in other brands (1)")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Mini 2.6 mm" }));
+    expect((screen.getByLabelText("Beads") as HTMLSelectElement).value).toBe("mard-221"); // MARD comes in both sizes
+    expect(screen.queryByText(/Mix in other brands \(/) === null).toBe(true); // Hama Midi dropped
+    fireEvent.click(screen.getByRole("radio", { name: "Maxi 10 mm" }));
+    expect((screen.getByLabelText("Beads") as HTMLSelectElement).value).toBe("hama-maxi");
   });
 
   test("theme toggle switches and remembers light mode", () => {

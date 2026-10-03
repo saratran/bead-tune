@@ -3,7 +3,8 @@
  * Usage: bun scripts/import-beadcolors.ts
  */
 const REPO = "https://raw.githubusercontent.com/maxcleme/beadcolors/master";
-const SOURCES = ["mard", "perler"] as const;
+// Fuse bead charts (Diamond Dotz, Perler Caps and Yant are left out: not fuse beads, or size unclear).
+const SOURCES = ["mard", "perler", "perler_mini", "hama", "hama_mini", "hama_maxi", "artkal_s", "artkal_r", "artkal_a", "artkal_c", "artkal_m", "nabbi"] as const;
 
 type Row = [code: string, name: string, hex: string];
 

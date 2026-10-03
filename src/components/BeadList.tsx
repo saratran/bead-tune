@@ -8,9 +8,11 @@ interface Props {
   onSwap: (c: BeadColor) => void;
   onRemove: (c: BeadColor) => void;
   canRemove: boolean;
+  /** Mixed brands: show each colour's brand. */
+  showBrand?: boolean;
 }
 
-export function BeadList({ pattern, highlightId, onHighlight, onSwap, onRemove, canRemove }: Props) {
+export function BeadList({ pattern, highlightId, onHighlight, onSwap, onRemove, canRemove, showBrand = false }: Props) {
   const total = pattern?.total ?? 0;
   const count = pattern?.colors.length ?? 0;
   return (
@@ -33,6 +35,7 @@ export function BeadList({ pattern, highlightId, onHighlight, onSwap, onRemove, 
                   <span className="swatch" style={{ background: c.hex }} />
                   <span className="bead-name">
                     <b>{c.code}</b>{c.name && ` ${c.name}`}
+                    {showBrand && <span className="bead-brand">{c.brand}</span>}
                   </span>
                   <span className="bead-count">{pattern.counts[i]!.toLocaleString()}</span>
                 </button>

@@ -2358,3 +2358,28 @@ button.zoom-level:hover:not(:disabled) {
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
+
+/* Mixing bead brands of one size */
+.mix-brands > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--link);
+  margin-top: 6px;
+}
+
+.mix-brands[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bead-brand {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
