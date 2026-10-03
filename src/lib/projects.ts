@@ -25,6 +25,8 @@ export interface ProjectState {
   swaps: [from: string, to: string][];
   /** Bookmarked Auto suggestions (missing in older projects). */
   bookmarks?: import("./bookmarks").Bookmark[];
+  /** Build mode progress: placed beads (cell indices) for a `w` × `h` pattern (missing in older projects). */
+  build?: { w: number; h: number; placed: number[] };
   /** Hand edits for a `w` × `h` grid: cell index → colour id, or null for a removed bead. */
   edits: {
     w: number;

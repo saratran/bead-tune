@@ -570,3 +570,40 @@ describe("editing tools in the app", () => {
     expect(screen.getByText("Edit beads")).toBeTruthy();
   });
 });
+
+describe("build mode", () => {
+  const halves = (w: number, h: number) => {
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) data.set(x < w / 2 ? [200, 30, 40, 255] : [40, 90, 200, 255], (y * w + x) * 4);
+    return data;
+  };
+  const progress = () => screen.getByTestId("build-progress").textContent;
+
+  test("tick beads off board by board; progress shows on the Build button", async () => {
+    mockPixels(halves);
+    render(<App />);
+    fireEvent.click(screen.getByText("Try a sample image"));
+    await waitFor(() => expect(document.querySelector(".pattern-canvas")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Build" }));
+    const dlg = screen.getByRole("dialog", { name: "Build mode" });
+    expect(progress()).toBe("0 of 2,704 placed · 0%");
+    expect(within(dlg).getByText("Board 1 of 4")).toBeTruthy(); // 52 × 52 on 26-peg boards
+
+    // Tap a bead (the board canvas is fitted into the 600 × 400 test box: 26 beads → 15 px).
+    const canvas = dlg.querySelector(".build-canvas")!;
+    fireEvent.pointerDown(canvas, { clientX: 7, clientY: 7, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    expect(progress()).toBe("1 of 2,704 placed · 0%");
+
+    fireEvent.click(within(dlg).getByText("✓ Board done"));
+    expect(progress()).toBe("676 of 2,704 placed · 25%");
+    expect(within(dlg).getByText("Board 2 of 4")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(within(dlg).getByText(/Board 1 of 4/)).toBeTruthy();
+    expect(within(dlg).getByText(/done ✓/)).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Build mode" }) === null).toBe(true);
+    expect(screen.getByRole("button", { name: "Build · 25%" })).toBeTruthy();
+  });
+});

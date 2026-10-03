@@ -20,6 +20,8 @@ import { requestPersistentStorage, type ProjectLocation, type ProjectMeta, type 
 import { storeFor } from "./lib/projectStores";
 import { canvasSource, FULL_CROP, type Crop } from "./lib/sampling";
 import { ExportDialog } from "./components/ExportDialog";
+import { BuildMode } from "./components/BuildMode";
+import { progressOf } from "./lib/build";
 import { DisplayControls, EditBar, type DisplaySettings } from "./components/PatternControls";
 import { Toggle } from "./components/Toggle";
 import { DEFAULT_EXPORT, type ExportSettings } from "./lib/export";
@@ -180,6 +182,9 @@ export function App() {
   const [brush, setBrush] = useState<BeadColor | null>(null);
   const [brushSize, setBrushSize] = useState<BrushSize>(1);
   const [redoStack, setRedoStack] = useState<Edits[]>([]);
+  // Build mode: which beads are placed, for a pattern of size w × h (ignored if the size changes).
+  const [build, setBuild] = useState<{ w: number; h: number; placed: Set<number> }>({ w: 0, h: 0, placed: new Set() });
+  const [buildOpen, setBuildOpen] = useState(false);
   // The last bead of the last paint/erase stroke: Shift-click draws a line from it.
   const lastStroke = useRef<number | null>(null);
 
@@ -214,6 +219,7 @@ export function App() {
       setCrop(FULL_CROP);
       resetEdits();
       clearHandEdits();
+      setBuild({ w: 0, h: 0, placed: new Set() });
     },
     [resetEdits, clearHandEdits],
   );
@@ -530,8 +536,9 @@ export function App() {
         cells: [...edits.map].map(([i, c]) => [i, c?.id ?? null]),
       },
       bookmarks,
+      ...(build.placed.size ? { build: { w: build.w, h: build.h, placed: [...build.placed] } } : {}),
     }),
-    [brandId, width, boardSize, imageSettings, crop, outlineId, ownedOnly, excluded, swaps, edits, bookmarks],
+    [brandId, width, boardSize, imageSettings, crop, outlineId, ownedOnly, excluded, swaps, edits, bookmarks, build],
   );
   const projectJson = useMemo(() => JSON.stringify(projectState), [projectState]);
   const dirty = !!project && projectJson !== savedJson;
@@ -633,6 +640,7 @@ export function App() {
     setImageSettings({ ...DEFAULT_IMAGE_SETTINGS, ...savedImage, ...(insideMargin ? { edgeMargin: true } : {}) });
     setCrop(st.crop ?? FULL_CROP);
     pendingBookmarks.current = st.bookmarks ?? null;
+    setBuild(st.build ? { w: st.build.w, h: st.build.h, placed: new Set(st.build.placed) } : { w: 0, h: 0, placed: new Set() });
     setOutlineId(st.outlineId);
     setOwnedOnly(st.ownedOnly);
     setExcluded(new Set(st.excluded));
@@ -825,6 +833,9 @@ export function App() {
   };
 
   const edited = excluded.size > 0 || swaps.size > 0;
+  // Build progress only counts for the pattern size it was made on.
+  const buildFits = !!pattern && build.w === pattern.width && build.h === pattern.height;
+  const buildPct = buildFits && pattern ? Math.floor((100 * progressOf(pattern, build.placed).placed) / Math.max(1, pattern.total)) : 0;
   // Other brands of this size that can be mixed in (not another preset of the main brand's chart).
   const mainSource = getBrand(choice.ids[0]!).source;
   const mixable = brandsForSize(choice.size).filter((b) => b.id !== choice.ids[0] && b.source !== mainSource);
@@ -1082,6 +1093,17 @@ export function App() {
                   <button className={`btn ${tool ? "btn-primary" : "btn-ghost"}`} aria-pressed={!!tool} disabled={!pattern} onClick={() => setTool(tool ? null : "paint")}>
                     {tool ? "Done editing" : "Edit beads"}
                   </button>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={!pattern?.total}
+                    onClick={() => {
+                      setTool(null);
+                      setBuildOpen(true);
+                    }}
+                    title="Place the beads board by board, ticking them off as you go"
+                  >
+                    Build{buildFits && build.placed.size > 0 ? ` · ${buildPct}%` : ""}
+                  </button>
                   <button className="btn btn-ghost" disabled={!pattern?.total} onClick={enterFullscreen} title="View and edit fullscreen">
                     ⤢ Fullscreen
                   </button>
@@ -1248,6 +1270,17 @@ export function App() {
             />
           </div>
         </div>
+      )}
+      {buildOpen && pattern && pattern.total > 0 && (
+        <BuildMode
+          pattern={pattern}
+          boardSize={boardSize}
+          title={project?.name ?? fileName}
+          placed={buildFits ? build.placed : new Set()}
+          onPlaced={(placed) => setBuild({ w: pattern.width, h: pattern.height, placed })}
+          theme={theme}
+          onClose={() => setBuildOpen(false)}
+        />
       )}
       {notice && (
         <div className={`toast ${notice.error ? "toast-error" : ""}`} role={notice.error ? "alert" : "status"}>

@@ -209,6 +209,27 @@ describe("projects in the app", () => {
     expect(screen.getAllByTitle("A rather long project name for the top bar").length).toBeGreaterThan(0);
   });
 
+  test("build progress is saved with the project", async () => {
+    await loadSample();
+    fireEvent.click(screen.getByRole("button", { name: "Build" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Build mode" })).getByText("✓ Board done"));
+    fireEvent.click(screen.getByLabelText("Close build mode"));
+    await saveAs("Half built");
+    fireEvent.click(within(dialog()).getByLabelText("Close"));
+    // Clear it (Reset), then reopen the saved project: the progress comes back.
+    fireEvent.click(screen.getByRole("button", { name: "Build · 25%" }));
+    const build = screen.getByRole("dialog", { name: "Build mode" });
+    fireEvent.click(within(build).getByRole("button", { name: "Reset" }));
+    fireEvent.click(within(build).getByRole("button", { name: "Reset" })); // confirm
+    fireEvent.click(screen.getByLabelText("Close build mode"));
+    expect(screen.getByRole("button", { name: "Build" })).toBeTruthy();
+    fireEvent.click(screen.getByText("Projects"));
+    fireEvent.click(await within(dialog()).findByRole("button", { name: "Open" }));
+    const prompt = await screen.findByRole("alertdialog", { name: "Unsaved changes" });
+    fireEvent.click(within(prompt).getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Build · 25%" })).toBeTruthy());
+  });
+
   test("a new image starts a new unsaved project", async () => {
     await loadSample();
     await saveAs("Berry");
