@@ -261,6 +261,15 @@ export function App() {
     [crop, palette],
   );
 
+  /** What Auto searches, tunes and scores from: the current settings, never removing the background. */
+  const autoBase = useCallback(
+    (settings: ImageSettings, w: number): PipelineSettings => {
+      const p = pipelineSettings(settings, w);
+      return { ...p, options: { ...p.options, removeBackground: false } };
+    },
+    [pipelineSettings],
+  );
+
   const result = useMemo(
     () => (source ? buildPattern(source, pipelineSettings(dSettings, dWidth)) : null),
     [source, dSettings, dWidth, pipelineSettings],
@@ -306,6 +315,8 @@ export function App() {
       ditherStrength: c.dither.strength || imageSettings.ditherStrength,
       cleanup: c.cleanup,
       adjustments: { brightness: c.brightness, contrast: c.contrast, saturation: c.saturation },
+      // Suggestions are made without background removal; applying one shows exactly what was suggested.
+      removeBackground: false,
     });
     setModal(null);
     setNotice({ text: `Applied “${sg.label}”` });
@@ -722,7 +733,7 @@ export function App() {
     if (bookmarks.some((b) => sameCandidate(b.candidate, c))) return "These settings are already bookmarked.";
     // Scored against the tone the settings go for (a big saturation boost is a vivid choice, not an error).
     const tone = toneForSaturation(c.saturation);
-    const evaluate = makeEvaluator(source, pipelineSettings(imageSettings, width), tone);
+    const evaluate = makeEvaluator(source, autoBase(imageSettings, width), tone);
     const r = evaluate(c);
     if (!r) return "Nothing to bookmark: the pattern is empty.";
     const anchors = anchorsSync(evaluate, tone);
@@ -1245,7 +1256,7 @@ export function App() {
       {modal?.kind === "auto" && source && (
         <AutoDialog
           source={source}
-          base={pipelineSettings(imageSettings, width)}
+          base={autoBase(imageSettings, width)}
           results={autoResults?.key === autoKey ? autoResults.list : null}
           onResults={(list) => setAutoResults({ key: autoKey, list })}
           onApply={(sg) => guardEdits(() => applySuggestion(sg))}

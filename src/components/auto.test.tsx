@@ -713,3 +713,24 @@ test("re-scoring judges your own settings by the tone their saturation implies",
   await waitFor(() => expect(onBookmarksChange).toHaveBeenCalled(), { timeout: 5000 });
   expect(onBookmarksChange.mock.lastCall![0][0]).toMatchObject({ tone: "vivid", scoreVersion: SCORE_VERSION });
 });
+
+test("Auto never removes the background, even when the image settings do", async () => {
+  mockPixels((w, h) => {
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d.set(x < w / 2 ? [210, 40, 50, 255] : [255, 255, 255, 255], (y * w + x) * 4);
+    return d;
+  });
+  const { container } = render(<App />);
+  fireEvent.click(screen.getByText("Try a sample image"));
+  await waitFor(() => expect(container.querySelector(".pattern-canvas")).toBeTruthy());
+  fireEvent.click(screen.getByLabelText("Remove background"));
+  expect((screen.getByLabelText("Remove background") as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByText("✨ Auto suggestions"));
+  fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "builtin:quick" } });
+  fireEvent.click(screen.getByText("Find suggestions"));
+  const use = await screen.findAllByText("Use this", undefined, { timeout: 8000 });
+  // The white half is still in the suggestion (not removed as background).
+  expect(document.querySelector(".auto-results .auto-card")!.textContent).toContain("2,704 beads"); // all 52 × 52
+  fireEvent.click(use[0]!);
+  expect((screen.getByLabelText("Remove background") as HTMLInputElement).checked).toBe(false);
+}, 20000);
