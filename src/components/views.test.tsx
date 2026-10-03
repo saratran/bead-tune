@@ -186,6 +186,11 @@ describe("App", () => {
     expect((screen.getByLabelText("Beads") as HTMLSelectElement).value).toBe("hama-maxi");
   });
 
+  test("links to the guide", () => {
+    render(<App />);
+    expect(screen.getByRole("link", { name: "Guide" }).getAttribute("href")).toBe("./guide.html");
+  });
+
   test("theme toggle switches and remembers light mode", () => {
     render(<App />);
     fireEvent.click(screen.getByText("Light mode"));

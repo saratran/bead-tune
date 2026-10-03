@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import index from "./index.html";
+import guide from "./guide.html";
 import { createProjectsApi } from "./src/server/projectsApi";
 
 // Projects saved "on the server" live in a SQLite file here (a Docker volume in production).
@@ -28,6 +29,8 @@ const server = Bun.serve({
   routes: {
     "/api/*": (req) => projects.handle(req),
     "/auto-worker.js": workerRoute,
+    "/guide.html": guide,
+    "/guide": guide,
     "/*": index,
   },
   development: !production && {

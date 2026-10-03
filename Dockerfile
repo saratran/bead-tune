@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
-COPY server.ts index.html tsconfig.json ./
+COPY server.ts index.html guide.html tsconfig.json ./
 COPY src ./src
 
 ENV NODE_ENV=production \

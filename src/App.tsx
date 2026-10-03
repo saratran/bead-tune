@@ -879,6 +879,9 @@ export function App() {
           <button className="top-btn" onClick={() => setProjectsOpen(true)}>
             Projects
           </button>
+          <a className="top-btn" href="./guide.html" target="_blank" rel="noopener">
+            Guide
+          </a>
           <button className="top-btn icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
             <span aria-hidden>{theme === "dark" ? "☀" : "☾"}</span>
             <span className="sr-only">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
@@ -1171,7 +1174,9 @@ export function App() {
               <button className="btn btn-ghost" onClick={() => void sampleImage()}>
                 Try a sample image
               </button>
-              <p className="muted small">Your image never leaves your browser.</p>
+              <p className="muted small">
+                Your image never leaves your browser · <a href="./guide.html" target="_blank" rel="noopener">How it works</a>
+              </p>
             </div>
           )}
         </section>

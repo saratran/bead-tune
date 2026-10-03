@@ -1,0 +1,125 @@
+/* The guide page (guide.html): a readable column with a contents list beside it. */
+.guide {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.guide-toc {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.guide-toc a,
+.guide-body a,
+.topbar a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.guide-toc a:hover,
+.guide-body a:hover {
+  text-decoration: underline;
+}
+
+.topbar .brand {
+  color: var(--ink);
+}
+
+.topbar .top-btn {
+  color: var(--ink);
+}
+
+.guide-body {
+  max-width: 720px;
+  line-height: 1.6;
+}
+
+.guide-body h1 {
+  font-size: clamp(28px, 4vw, 38px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.guide-body h2 {
+  margin: 36px 0 10px;
+  font-size: 22px;
+  font-weight: 800;
+  scroll-margin-top: 16px;
+}
+
+.guide-body .lead {
+  font-size: 17px;
+  color: var(--muted);
+}
+
+.guide-body dt {
+  font-weight: 800;
+  margin-top: 12px;
+}
+
+.guide-body dd {
+  margin: 2px 0 0;
+  color: var(--ink);
+}
+
+.steps li {
+  margin-bottom: 8px;
+}
+
+.tip {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+
+.keys {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.keys th,
+.keys td {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+kbd {
+  font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.guide-foot {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 760px) {
+  .guide {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .guide-toc {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+  }
+}

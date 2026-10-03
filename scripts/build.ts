@@ -10,7 +10,7 @@ import { rm } from "node:fs/promises";
 const outdir = "dist";
 await rm(outdir, { recursive: true, force: true });
 
-const pages = await Bun.build({ entrypoints: ["./index.html"], outdir, minify: true, splitting: true });
+const pages = await Bun.build({ entrypoints: ["./index.html", "./guide.html"], outdir, minify: true, splitting: true });
 // Auto's Web Worker is a separate bundle (the HTML bundler doesn't follow `new Worker(...)`).
 const worker = await Bun.build({ entrypoints: ["./src/lib/autoWorker.ts"], outdir, naming: "auto-worker.js", target: "browser", minify: true });
 

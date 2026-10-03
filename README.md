@@ -19,7 +19,13 @@ Everything runs in your browser: images are never uploaded.
 - **Image → pattern** — Smooth, Sharp or Pixel art sampling, noise smoothing, crop, background
   removal and trimming, colour limit, minimum beads per colour, Standard or Accurate (CIEDE2000)
   matching, diffusion or ordered dithering, stray-bead clean-up that keeps eyes and sparkles.
-- **Editing** — paint, erase and pick beads, add an outline ring, swap or remove colours, undo.
+- **Beads** — MARD, Perler, Hama, Artkal and Nabbi colour charts in mini (2.6 mm), midi (5 mm)
+  and maxi (10 mm) sizes; mix brands of the same size in one pattern; "only colours I have".
+- **Editing** — paint and erase with brush sizes 1–5, fill, replace a colour, straight lines
+  (Shift-click), pick (Alt-click), undo / redo, keyboard shortcuts, outline ring, swap or remove
+  colours.
+- **Build mode** — one pegboard at a time: pick a colour to see only its beads, tick beads off
+  as you place them, progress saved with the project.
 - **Projects** — save, reopen, version (“Save as…”) and search projects in the browser, or on
   your own server when self-hosted with it.
 - **Export** — PNG or PDF (one page per pegboard), with colour codes, grid, coordinates and a
@@ -28,7 +34,8 @@ Everything runs in your browser: images are never uploaded.
 
 ## Use it
 
-Open the hosted app, or run it yourself (below). The in-app **Guide** explains each step.
+Open the hosted app, or run it yourself (below). The **Guide** (`guide.html`, linked from the
+app) explains each step, the scores, the editing shortcuts and build mode.
 
 ## Self-hosting
 

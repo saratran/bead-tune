@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Guide · BeadTune</title>
+    <meta name="description" content="How to turn an image into a fuse bead pattern with BeadTune: beads and size, image settings, Auto suggestions, editing, build mode and printing." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" />
+    <link rel="stylesheet" href="./src/styles.css" />
+    <link rel="stylesheet" href="./src/guide.css" />
+    <script type="module" src="./src/guide.ts"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./">
+        <span class="logo" aria-hidden="true"><i></i> <i></i> <i></i> <i></i></span>
+        <span class="brand-name">BeadTune</span>
+      </a>
+      <div class="topbar-right">
+        <a class="top-btn" href="./">Open the app</a>
+      </div>
+    </header>
+
+    <main class="guide">
+      <nav class="guide-toc" aria-label="Contents">
+        <strong>Guide</strong>
+        <a href="#start">Quick start</a>
+        <a href="#beads">Beads and size</a>
+        <a href="#image">Image settings</a>
+        <a href="#auto">✨ Auto suggestions</a>
+        <a href="#scores">Scores</a>
+        <a href="#edit">Editing</a>
+        <a href="#build">Build mode</a>
+        <a href="#export">Printing and fusing</a>
+        <a href="#projects">Projects</a>
+        <a href="#faq">Questions</a>
+      </nav>
+
+      <article class="guide-body">
+        <h1>How to use BeadTune</h1>
+        <p class="lead">
+          BeadTune turns a photo or drawing into a fuse bead pattern you can build on pegboards, with a shopping list of beads.
+          Its ✨ Auto suggestions try hundreds of settings and fine-tune the best, so you can pick a look instead of fiddling with sliders.
+        </p>
+
+        <section id="start">
+          <h2>Quick start</h2>
+          <ol class="steps">
+            <li><strong>Add an image.</strong> Drop it on the page, click to choose a file, or paste it. Try the sample if you just want to look around. Your image never leaves your browser.</li>
+            <li><strong>Pick your beads and size.</strong> In <em>Size &amp; beads</em>, choose the bead size and brand, how many beads wide the pattern should be, and your pegboard size.</li>
+            <li><strong>Let Auto find a look.</strong> Click <em>✨ Auto suggestions</em> → <em>Find suggestions</em>, then <em>Use this</em> on the one you like. Fine-tune by hand if you want.</li>
+            <li><strong>Tidy and build.</strong> Swap or remove colours in <em>Beads to buy</em>, touch up beads with <em>Edit beads</em>, then <em>Export</em> a PDF or follow along in <em>Build</em> mode.</li>
+          </ol>
+          <p class="tip">Tip: crop the image to just the subject first (<em>✂ Crop</em>). Fewer beads go into the background and the subject gets more detail.</p>
+        </section>
+
+        <section id="beads">
+          <h2>Beads and size</h2>
+          <dl>
+            <dt>Bead size</dt>
+            <dd><em>Mini 2.6 mm</em>, <em>Midi 5 mm</em> (the usual Perler / Hama size) or <em>Maxi 10 mm</em>. The list of brands follows the size.</dd>
+            <dt>Beads</dt>
+            <dd>The brand's colour chart: MARD, Perler, Hama, Artkal or Nabbi. Every colour in the pattern is a real bead with its code.</dd>
+            <dt>Mix in other brands</dt>
+            <dd>Beads of the same size from different brands fuse together, so you can combine charts for more colours. Mixed colours show their brand in the list.</dd>
+            <dt>Width and pegboard size</dt>
+            <dd>The width is in beads; the height follows the image. 52 wide is two square 26-peg boards across (2 × 2 boards for a square image). Bigger patterns keep more detail but take more beads and time.</dd>
+            <dt>Only colours I have</dt>
+            <dd>Tick the beads you own under <em>Choose</em>, then switch this on to use only those.</dd>
+          </dl>
+        </section>
+
+        <section id="image">
+          <h2>Image settings</h2>
+          <p>Everything updates the pattern straight away. You rarely need all of these — Auto tries them for you.</p>
+          <dl>
+            <dt>Sampling</dt>
+            <dd><em>Smooth</em> blends the colours inside each bead (best for photos and paintings). <em>Sharp</em> takes each bead's main colour (crisper edges for drawings and logos). <em>Pixel art</em> detects the pixels of enlarged pixel art and copies them bead for bead.</dd>
+            <dt>Brightness, contrast, saturation</dt>
+            <dd>Bolder colours often keep faint details — a mouth, a blush — that would otherwise blend into the skin.</dd>
+            <dt>Background</dt>
+            <dd><em>Remove background</em> leaves empty pegs around the subject (pick the background colour from the image if it guesses wrong). <em>Trim empty space</em> crops the pattern to the subject.</dd>
+            <dt>Colours</dt>
+            <dd>The most bead colours to use. Fewer colours are cheaper and easier; more keep shading. <em>Accurate</em> colour matching (CIEDE2000) usually picks closer beads than <em>Standard</em>.</dd>
+            <dt>Dithering</dt>
+            <dd>Mixes two bead colours in a pattern to suggest a shade in between — good for smooth gradients, noisy up close.</dd>
+            <dt>Clean up</dt>
+            <dd>Removes stray single beads and tiny groups, so there's less to place. Very dark or bright single beads (eyes, sparkles) are kept.</dd>
+          </dl>
+        </section>
+
+        <section id="auto">
+          <h2>✨ Auto suggestions</h2>
+          <p>Auto builds and scores hundreds of patterns from your image with different settings, then fine-tunes the best ones. It keeps your bead set, width and crop, and never removes the background.</p>
+          <ol class="steps">
+            <li><strong>Search.</strong> Pick a preset (the default is a good start) and <em>Colour tones</em>: <em>Natural</em> aims for the original's colours, <em>Vivid</em> for richer ones, <em>Muted</em> for softer ones. <em>Find suggestions</em> runs it.</li>
+            <li><strong>Results.</strong> You get named picks — <em>Most faithful</em>, <em>Most detailed</em>, <em>Balanced</em>, <em>Simplest</em>, <em>Smooth shading</em>, <em>Crisp</em> — for each tone. Click a thumbnail to see it large next to the original.</li>
+            <li><strong>Make it yours.</strong> <em>★</em> bookmarks a result (kept for this image across searches and in projects). <em>More like this</em> fine-tunes around one result; tick <em>Prefer</em> on several and <em>Tune selected</em> to blend them. <em>★ Bookmark current settings</em> adds your own hand-made settings, so you can compare and tune them too.</li>
+            <li><strong>Use it.</strong> <em>Use this</em> applies the settings to your pattern.</li>
+          </ol>
+          <p class="tip">Search space and presets: open <em>Search space</em> to choose exactly which values are tried, and save your favourite set as a preset.</p>
+        </section>
+
+        <section id="scores">
+          <h2>Reading the scores</h2>
+          <p>Every result is scored out of 100 for this image, on the same scale for suggestions, bookmarks and your own settings:</p>
+          <ul>
+            <li><strong>Features</strong> — outlines, eyes and faint details kept. 100 is the most detail beads can keep for this image.</li>
+            <li><strong>Likeness</strong> — how close the colours are to the original (for the chosen tone).</li>
+            <li><strong>Ease</strong> — fewer colours and stray beads, bigger areas of one colour: quicker to build.</li>
+          </ul>
+          <p>0 is a deliberately crude 6-colour version. Scores trade off: the most detailed pattern is rarely the easiest. A bold, vivid look can have lower likeness and still be the one you like best — trust your eyes.</p>
+        </section>
+
+        <section id="edit">
+          <h2>Editing beads</h2>
+          <p>Click <em>Edit beads</em> to change individual beads. Hand edits sit on top of the pattern; if you change settings that rebuild it, you're asked first.</p>
+          <table class="keys">
+            <thead><tr><th>Tool / action</th><th>Key</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>Paint</td><td><kbd>B</kbd></td><td>Paints with the brush colour; drag to paint a stroke.</td></tr>
+              <tr><td>Erase</td><td><kbd>E</kbd></td><td>Removes beads (empty pegs).</td></tr>
+              <tr><td>Fill</td><td><kbd>G</kbd></td><td>Fills a connected area of one colour.</td></tr>
+              <tr><td>Replace</td><td><kbd>R</kbd></td><td>Replaces every bead of the clicked colour.</td></tr>
+              <tr><td>Pick colour</td><td><kbd>I</kbd> or <kbd>Alt</kbd>-click</td><td>Takes a bead's colour for the brush.</td></tr>
+              <tr><td>Brush size</td><td><kbd>[</kbd> <kbd>]</kbd></td><td>1, 2, 3 or 5 beads across.</td></tr>
+              <tr><td>Straight line</td><td><kbd>Shift</kbd>-click</td><td>Paints or erases a line from the last bead.</td></tr>
+              <tr><td>Undo / redo</td><td><kbd>⌘/Ctrl</kbd>+<kbd>Z</kbd> · <kbd>⌘/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td></td></tr>
+              <tr><td>Done</td><td><kbd>Esc</kbd></td><td>Leaves editing.</td></tr>
+            </tbody>
+          </table>
+          <p><em>Add outline</em> traces a one-bead ring around the shape; <em>Edge margin</em> adds an empty ring round the pattern so the outline fits. In <em>Beads to buy</em>, ⇄ swaps a colour for another bead and × removes it.</p>
+        </section>
+
+        <section id="build">
+          <h2>Build mode</h2>
+          <p>
+            <em>Build</em> shows one pegboard at a time. Pick a colour to see only its beads, place them, and tap (or drag over) beads to tick them off.
+            <em>Board done</em> finishes a board and moves to the next; ← → switch boards. Your progress is saved with the project and shows on the Build button.
+          </p>
+        </section>
+
+        <section id="export">
+          <h2>Printing and fusing</h2>
+          <p><em>Export</em> makes a PNG or a PDF with one page per pegboard, colour codes in each peg, a grid with coordinates and the bead count.</p>
+          <ul>
+            <li>Place the beads on the pegboard (Build mode or the printout), then cover them with ironing paper.</li>
+            <li>Iron on medium heat in small circles for 10–20 seconds, until the beads fuse but the holes stay open. Let it cool under a book so it stays flat, then fuse the back if you like.</li>
+            <li>Big patterns: join the boards with a strip of beads across the seams before ironing.</li>
+          </ul>
+        </section>
+
+        <section id="projects">
+          <h2>Projects</h2>
+          <p>
+            <em>Save</em> keeps the image and every setting, edit, bookmark and build progress as a project; <em>Save as…</em> saves a new version
+            ("Name v2"), and versions are grouped in the list. Projects are stored in this browser. If BeadTune is self-hosted with its server, you can
+            also save to the server to share projects between your devices.
+          </p>
+        </section>
+
+        <section id="faq">
+          <h2>Questions</h2>
+          <dl>
+            <dt>Is my image uploaded?</dt>
+            <dd>No. Everything happens in your browser.</dd>
+            <dt>The colours look a little different from my beads.</dt>
+            <dd>Screens and bead batches vary. Colours come from community colour charts (maxcleme/beadcolors); check against your real beads and swap any that are off.</dd>
+            <dt>Auto is slow.</dt>
+            <dd>It uses all but one of your computer's cores. Fewer combinations (<em>Try at most</em>), a smaller width or the <em>Quick</em> preset make it faster.</dd>
+          </dl>
+        </section>
+
+        <footer class="guide-foot muted small">
+          BeadTune is inspired by <a href="https://easybeadpattern.com/">EasyBeadPattern</a>. Bead colours from
+          <a href="https://github.com/maxcleme/beadcolors">maxcleme/beadcolors</a> (MIT).
+        </footer>
+      </article>
+    </main>
+  </body>
+</html>
