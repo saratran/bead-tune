@@ -1,11 +1,13 @@
 # Publishes the static app (bun run build → dist/) to GitHub Pages.
 #
-# To use it: Settings → Pages → Source: "GitHub Actions" (a private repo needs a paid
-# GitHub plan for Pages). It runs when started by hand (Actions → Deploy to GitHub Pages
-# → Run workflow); add `push: { branches: [main] }` under `on:` to deploy on every push.
+# Setup (once): Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# Deploys on every push to main (the published version; development happens on develop),
+# or by hand: Actions → Deploy to GitHub Pages → Run workflow.
 name: Deploy to GitHub Pages
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
