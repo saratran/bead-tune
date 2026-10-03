@@ -87,10 +87,11 @@ describe("sizes and mixing brands", () => {
     expect(new Set(mix.colors.map((c) => c.brand))).toEqual(new Set(["MARD", "Hama"]));
   });
 
-  test("a single brand in its usual size keeps its plain id; another size is spelled out", () => {
-    expect(brandIdOf({ size: "5mm", ids: ["mard-221"] })).toBe("mard-221");
-    expect(brandIdOf({ size: "2.6mm", ids: ["mard-221"] })).toBe("2.6mm:mard-221");
-    expect(parseBrandId("2.6mm:mard-221")).toEqual({ size: "2.6mm", ids: ["mard-221"] });
+  test("mini is the default size; a single brand in its usual size keeps its plain id", () => {
+    expect(parseBrandId(DEFAULT_BRAND_ID)).toEqual({ size: "2.6mm", ids: ["mard-221"] });
+    expect(brandIdOf({ size: "2.6mm", ids: ["mard-221"] })).toBe("mard-221");
+    expect(brandIdOf({ size: "5mm", ids: ["mard-221"] })).toBe("5mm:mard-221");
+    expect(parseBrandId("5mm:mard-221")).toEqual({ size: "5mm", ids: ["mard-221"] });
   });
 
   test("brands of another size are dropped from a mix", () => {

@@ -70,7 +70,8 @@ export const BRANDS: Brand[] = [
 ];
 
 export const DEFAULT_BRAND_ID = "mard-221";
-export const DEFAULT_SIZE: BeadSize = "5mm";
+/** Mini beads by default (the default MARD chart comes in mini and midi). */
+export const DEFAULT_SIZE: BeadSize = "2.6mm";
 
 /** The brands available in a size. */
 export function brandsForSize(size: BeadSize): Brand[] {
