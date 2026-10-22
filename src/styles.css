@@ -416,15 +416,22 @@ input[type="range"] {
   flex: none;
 }
 
+/* Exactly one line, always: if its height changed with the text (hover read-out, tool hints),
+   the pattern above would be re-fitted and jump under the cursor. */
 .pattern-status {
-  margin-top: 10px;
+  margin-top: 8px;
+  height: 20px;
+  line-height: 20px;
   font-size: 13px;
   color: var(--muted);
-  min-height: 20px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pattern-status .dot {
+  vertical-align: -1px;
+  margin: 0 3px;
 }
 
 .dot {
@@ -2289,10 +2296,29 @@ button.zoom-level:hover:not(:disabled) {
  * rows you can swipe sideways.
  */
 @media (max-width: 860px) {
-  .app {
-    height: 100vh;
-    height: 100dvh;
+  /* Pinned to the screen: the page itself never scrolls (that let the browser bar collapse,
+     resizing everything and leaving a gap); only the panels and toolbars inside do. */
+  html,
+  body {
+    height: 100%;
     overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .app {
+    position: fixed;
+    inset: 0;
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .panel-scroll,
+  .stage-bar,
+  .stage-controls,
+  .edit-bar,
+  .welcome {
+    overscroll-behavior: contain;
   }
 
   .topbar {
@@ -2374,8 +2400,21 @@ button.zoom-level:hover:not(:disabled) {
     overflow: hidden;
   }
 
-  .workspace.editing .stage {
-    flex-basis: 74%;
+  /* Editing swaps the view-options row for the edit tools (same height), so the pattern
+     keeps exactly the same size when you start or stop editing. */
+  .workspace.editing .stage-controls {
+    display: none;
+  }
+
+  .stage-controls,
+  .stage .edit-bar {
+    height: 40px;
+    flex: none;
+    align-items: center;
+  }
+
+  .stage .edit-bar {
+    padding: 0 6px;
   }
 
   .stage-canvas {
@@ -2481,10 +2520,6 @@ button.zoom-level:hover:not(:disabled) {
     grid-row: auto;
   }
 
-  .workspace.editing .settings-panel,
-  .workspace.editing .beads-panel {
-    flex-basis: 26%;
-  }
 
   .workspace:not(.show-beads) .beads-panel,
   .workspace.show-beads .settings-panel {
