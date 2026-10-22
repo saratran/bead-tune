@@ -76,6 +76,8 @@ export function PatternView({
   const pinch = useRef<number | null>(null);
   const pan = useRef<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
+  // Once a stylus has been used, fingers move the view and only the pen edits (no stray palm marks).
+  const penSeen = useRef(false);
   // Centre of the view as a fraction of the content, so zooming keeps it in place.
   const centre = useRef({ x: 0.5, y: 0.5 });
 
@@ -185,7 +187,9 @@ export function PatternView({
           className={`pattern-canvas ${tool ? `editing tool-${tool}` : ""} ${fullscreen && !tool ? "pannable" : ""}`}
           onMouseMove={(e) => setHover(cellAt(e))}
           onMouseLeave={() => setHover(null)}
+          onPointerLeave={(e) => e.pointerType === "pen" && setHover(null)}
           onPointerDown={(e) => {
+            if (e.pointerType === "pen") penSeen.current = true;
             pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             if (fullscreen && pointers.current.size === 2) {
               // Second finger: switch to pinch-zoom and abandon any stroke or pan.
@@ -194,7 +198,8 @@ export function PatternView({
               pinch.current = pinchDistance();
               return;
             }
-            if (tool && onEdit) {
+            const fingerWithPen = e.pointerType === "touch" && penSeen.current;
+            if (tool && onEdit && !fingerWithPen) {
               const c = cellAt(e);
               if (!c) return;
               e.preventDefault();
@@ -204,12 +209,14 @@ export function PatternView({
               if (e.altKey || !DRAG_TOOLS.includes(tool)) stroke.current = null;
               return;
             }
-            if (fullscreen && wrapRef.current) {
+            if ((fullscreen || fingerWithPen) && wrapRef.current) {
               e.currentTarget.setPointerCapture?.(e.pointerId);
               pan.current = { x: e.clientX, y: e.clientY, left: wrapRef.current.scrollLeft, top: wrapRef.current.scrollTop, moved: false };
             }
           }}
           onPointerMove={(e) => {
+            // A hovering pen shows where the brush will land, like a mouse does.
+            if (e.pointerType === "pen") setHover(cellAt(e));
             if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             if (pinch.current !== null) {
               const d = pinchDistance();
@@ -226,12 +233,16 @@ export function PatternView({
               return;
             }
             if (stroke.current === null || !onEdit || !tool || !DRAG_TOOLS.includes(tool)) return;
-            const c = cellAt(e);
-            if (!c) return;
-            const index = c.y * pattern.width + c.x;
-            if (index === stroke.current) return;
-            stroke.current = index;
-            onEdit(index, "move");
+            // Fast pen and finger strokes deliver several points per frame; use them all.
+            const points = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() ?? [];
+            for (const p of points.length ? points : [e]) {
+              const c = cellAt({ clientX: p.clientX, clientY: p.clientY, currentTarget: e.currentTarget });
+              if (!c) continue;
+              const index = c.y * pattern.width + c.x;
+              if (index === stroke.current) continue;
+              stroke.current = index;
+              onEdit(index, "move");
+            }
           }}
           onPointerUp={endPointer}
           onPointerCancel={endPointer}

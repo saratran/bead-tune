@@ -552,9 +552,12 @@ describe("editing tools in the app", () => {
     const sizes = () => screen.getByRole("radiogroup", { name: "Brush size" });
     expect(within(sizes()).getByRole("radio", { name: "Fill" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: "Paint" }).getAttribute("aria-checked")).toBe("true");
-    // Erase + Fill clears the red half (26 × 52) in one go.
+    // Erase keeps its own size: still 1 until Fill is chosen for it too.
     key("e");
+    expect(within(sizes()).getByRole("radio", { name: "1" }).getAttribute("aria-checked")).toBe("true");
+    key("g");
     expect(within(sizes()).getByRole("radio", { name: "Fill" }).getAttribute("aria-checked")).toBe("true");
+    // Erase + Fill clears the red half (26 × 52) in one go.
     click(5, 10);
     await waitFor(() => expect(edited()).toBe(26 * 52));
     key("z", { metaKey: true });
@@ -568,6 +571,39 @@ describe("editing tools in the app", () => {
     expect(screen.queryByText(/empty peg/) === null).toBe(true);
     key("r");
     expect(screen.getByRole("radio", { name: "Replace" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("each tool remembers its brush size; the size choice stays put for other tools", async () => {
+    await editing();
+    const sizes = () => screen.getByRole("radiogroup", { name: "Brush size" });
+    const checked = () => within(sizes()).getAllByRole("radio").find((r) => r.getAttribute("aria-checked") === "true")!.textContent;
+    key("]");
+    key("]"); // paint: 3
+    key("e");
+    expect(checked()).toBe("1");
+    key("]"); // erase: 2
+    key("b");
+    expect(checked()).toBe("3");
+    key("e");
+    expect(checked()).toBe("2");
+    key("r"); // replace has no size: still shown, dimmed
+    expect(sizes().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  test("with a stylus, fingers move the view instead of painting", async () => {
+    await editing();
+    key("e");
+    // A finger alone edits (no pen yet).
+    fireEvent.pointerDown(canvas(), at(3, 3, { pointerType: "touch" }));
+    fireEvent.pointerUp(canvas(), at(3, 3, { pointerType: "touch" }));
+    await waitFor(() => expect(edited()).toBe(1));
+    // Once the pen has been used, a finger doesn't edit.
+    fireEvent.pointerDown(canvas(), at(10, 10, { pointerType: "pen" }));
+    fireEvent.pointerUp(canvas(), at(10, 10, { pointerType: "pen" }));
+    await waitFor(() => expect(edited()).toBe(2));
+    fireEvent.pointerDown(canvas(), at(20, 20, { pointerType: "touch" }));
+    fireEvent.pointerUp(canvas(), at(20, 20, { pointerType: "touch" }));
+    expect(edited()).toBe(2);
   });
 
   test("Alt-click picks a colour; Esc finishes editing", async () => {

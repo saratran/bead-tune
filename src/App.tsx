@@ -133,6 +133,9 @@ export function App() {
   const [fullscreen, setFullscreen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [settingsTab, setSettingsTab] = useState<"setup" | "image" | "colours">("setup");
+  // Phones: which panel sits under the pattern, and the top bar's ☰ menu.
+  const [mobilePanel, setMobilePanel] = useState<"settings" | "beads">("settings");
+  const [menuOpen, setMenuOpen] = useState(false);
   // Resolves the pending "discard unsaved changes?" question.
   const [discardPrompt, setDiscardPrompt] = useState<((proceed: boolean) => void) | null>(null);
   // Set when a project was just opened: the next state snapshot is its "saved" state.
@@ -180,7 +183,11 @@ export function App() {
   const [undoStack, setUndoStack] = useState<Edits[]>([]);
   const [tool, setTool] = useState<EditTool | null>(null);
   const [brush, setBrush] = useState<BeadColor | null>(null);
-  const [brushSize, setBrushSize] = useState<BrushSize>(1);
+  // Paint and erase each remember their own brush size.
+  const [brushSizes, setBrushSizes] = useState<{ paint: BrushSize; erase: BrushSize }>({ paint: 1, erase: 1 });
+  const sizeTool = tool === "erase" ? "erase" : "paint";
+  const brushSize = brushSizes[sizeTool];
+  const setBrushSize = (size: BrushSize, forTool: "paint" | "erase" = sizeTool) => setBrushSizes((s) => ({ ...s, [forTool]: size }));
   const [redoStack, setRedoStack] = useState<Edits[]>([]);
   // Build mode: which beads are placed, for a pattern of size w × h (ignored if the size changes).
   const [build, setBuild] = useState<{ w: number; h: number; placed: Set<number> }>({ w: 0, h: 0, placed: new Set() });
@@ -750,8 +757,10 @@ export function App() {
     if (tools[key]) setTool(tools[key]);
     else if (key === "g") {
       // Fill is a brush size: it works with paint and erase.
-      setBrushSize("fill");
-      if (tool !== "paint" && tool !== "erase") setTool("paint");
+      if (tool !== "paint" && tool !== "erase") {
+        setTool("paint");
+        setBrushSize("fill", "paint");
+      } else setBrushSize("fill");
     } else if (key === "[" || key === "]") {
       const i = BRUSH_SIZES.indexOf(brushSize) + (key === "]" ? 1 : -1);
       setBrushSize(BRUSH_SIZES[Math.max(0, Math.min(BRUSH_SIZES.length - 1, i))]!);
@@ -789,7 +798,7 @@ export function App() {
       brush={brushOrDefault}
       onChooseBrush={() => setModal({ kind: "brush" })}
       brushSize={brushSize}
-      onBrushSize={setBrushSize}
+      onBrushSize={(size) => setBrushSize(size)}
       canUndo={undoStack.length > 0}
       onUndo={undo}
       canRedo={redoStack.length > 0}
@@ -899,29 +908,36 @@ export function App() {
           </button>
         )}
         <div className="topbar-right">
-          <button className="top-btn" disabled={!image && !project} onClick={() => void newProject()} title="Start a new project (asks first if this one isn't saved)">
-            New
-          </button>
           <button className="top-btn" disabled={!image} onClick={quickSave} title="Save (⌘S)">
             Save
           </button>
-          <button className="top-btn" disabled={!image || !project} onClick={() => setProjectsOpenState("saveAs")} title="Save as a new version with a different name">
-            Save as…
+          {/* On phones the rest folds into a ☰ menu; elsewhere it's shown inline. */}
+          <button className="top-btn icon menu-btn" aria-label="Menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
+            <span aria-hidden>☰</span>
           </button>
-          <button className="top-btn" onClick={() => setProjectsOpen(true)}>
-            Projects
-          </button>
-          <a className="top-btn" href="./guide.html" target="_blank" rel="noopener">
-            Guide
-          </a>
-          <button className="top-btn icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
-            <span aria-hidden>{theme === "dark" ? "☀" : "☾"}</span>
-            <span className="sr-only">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
-          </button>
+          {menuOpen && <div className="menu-scrim" onClick={() => setMenuOpen(false)} />}
+          <div className={`top-menu ${menuOpen ? "open" : ""}`} onClick={() => setMenuOpen(false)}>
+            <button className="top-btn" disabled={!image && !project} onClick={() => void newProject()} title="Start a new project (asks first if this one isn't saved)">
+              New
+            </button>
+            <button className="top-btn" disabled={!image || !project} onClick={() => setProjectsOpenState("saveAs")} title="Save as a new version with a different name">
+              Save as…
+            </button>
+            <button className="top-btn" onClick={() => setProjectsOpen(true)}>
+              Projects
+            </button>
+            <a className="top-btn" href="./guide.html" target="_blank" rel="noopener">
+              Guide
+            </a>
+            <button className="top-btn icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              <span aria-hidden>{theme === "dark" ? "☀" : "☾"}</span>
+              <span className="sr-only">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="workspace">
+      <main className={`workspace ${mobilePanel === "beads" ? "show-beads" : ""} ${tool ? "editing" : ""} ${image ? "" : "no-image"}`}>
         {/* Settings */}
         <aside className="panel settings-panel" aria-label="Settings">
           <div className="panel-scroll">
@@ -1125,7 +1141,7 @@ export function App() {
                   <DisplayControls display={display} onDisplay={setDisplay} showBoards={showBoards} onShowBoards={setShowBoards} canShowOriginal={!!image} />
                 </div>
                 <div className="stage-actions">
-                  <button className={`btn ${tool ? "btn-primary" : "btn-ghost"}`} aria-pressed={!!tool} disabled={!pattern} onClick={() => setTool(tool ? null : "paint")}>
+                  <button className={`btn edit-toggle ${tool ? "btn-primary" : "btn-ghost"}`} aria-pressed={!!tool} disabled={!pattern} onClick={() => setTool(tool ? null : "paint")}>
                     {tool ? "Done editing" : "Edit beads"}
                   </button>
                   <button
@@ -1248,6 +1264,22 @@ export function App() {
           </div>
         </aside>
       </main>
+
+      {/* Phones: switch the panel under the pattern, and reach Auto and Export with a thumb. */}
+      <nav className="mobile-nav" aria-label="Sections">
+        <button aria-pressed={mobilePanel === "settings"} className={mobilePanel === "settings" ? "on" : ""} onClick={() => setMobilePanel("settings")}>
+          ⚙ Settings
+        </button>
+        <button aria-pressed={mobilePanel === "beads"} className={mobilePanel === "beads" ? "on" : ""} onClick={() => setMobilePanel("beads")}>
+          ● Beads{pattern?.colors.length ? ` ${pattern.colors.length}` : ""}
+        </button>
+        <button disabled={!pattern} onClick={() => setModal({ kind: "auto", tab: "search" })}>
+          ✨ Auto
+        </button>
+        <button disabled={!pattern?.total} onClick={() => setExportOpen(true)}>
+          ⇩ Export
+        </button>
+      </nav>
 
       {fullscreen && pattern && (
         <div className="fullscreen" role="dialog" aria-modal="true" aria-label="Fullscreen pattern">

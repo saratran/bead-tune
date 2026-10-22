@@ -118,8 +118,15 @@ export function EditBar({
         <span className="dot big" style={{ background: brush?.hex }} />
         {brush ? colorLabel(brush) : "Colour"}
       </button>
-      {onBrushSize && (tool === "paint" || tool === "erase") && (
-        <div className="segmented brush-size" role="radiogroup" aria-label="Brush size" title="Brush size ([ and ] to change)">
+      {/* Always shown (dimmed for tools without a size) so the bar doesn't shift when switching tools. */}
+      {onBrushSize && (
+        <div
+          className={`segmented brush-size ${tool === "paint" || tool === "erase" ? "" : "inactive"}`}
+          role="radiogroup"
+          aria-label="Brush size"
+          aria-disabled={tool !== "paint" && tool !== "erase"}
+          title={tool === "paint" || tool === "erase" ? `Brush size for ${tool === "erase" ? "erasing" : "painting"} ([ and ] to change)` : "Brush size (for paint and erase)"}
+        >
           {BRUSH_SIZES.map((n) =>
             n === "fill" ? (
               <button

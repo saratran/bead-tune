@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
 import { DEFAULT_EXPORT, type ExportSettings } from "../lib/export";
 import { contextOf, mockPixels } from "../test/canvas-mock";
@@ -184,6 +184,29 @@ describe("App", () => {
     expect(screen.queryByText(/Mix in other brands \(/) === null).toBe(true); // Hama Mini dropped
     fireEvent.click(screen.getByRole("radio", { name: "Maxi 10 mm" }));
     expect((screen.getByLabelText("Beads") as HTMLSelectElement).value).toBe("hama-maxi");
+  });
+
+  test("phone navigation: switch panels, open Auto and Export; the ☰ menu opens and closes", async () => {
+    render(<App />);
+    await loadSample();
+    const nav = screen.getByRole("navigation", { name: "Sections" });
+    const workspace = document.querySelector(".workspace")!;
+    expect(workspace.classList.contains("show-beads")).toBe(false);
+    fireEvent.click(within(nav).getByRole("button", { name: /Beads/ }));
+    expect(workspace.classList.contains("show-beads")).toBe(true);
+    fireEvent.click(within(nav).getByRole("button", { name: /Settings/ }));
+    expect(workspace.classList.contains("show-beads")).toBe(false);
+    fireEvent.click(within(nav).getByRole("button", { name: /Auto/ }));
+    expect(screen.getByRole("dialog", { name: "Auto suggestions" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Close"));
+    fireEvent.click(within(nav).getByRole("button", { name: /Export/ }));
+    expect(screen.getByRole("dialog", { name: "Export" })).toBeTruthy();
+
+    const menu = screen.getByRole("button", { name: "Menu" });
+    fireEvent.click(menu);
+    expect(menu.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(document.querySelector(".menu-scrim")!);
+    expect(menu.getAttribute("aria-expanded")).toBe("false");
   });
 
   test("links to the guide", () => {
