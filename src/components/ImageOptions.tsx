@@ -33,7 +33,8 @@ export const DEFAULT_IMAGE_SETTINGS: ImageSettings = {
   trim: false,
   maxColors: 24,
   minBeads: 0,
-  metric: "standard",
+  // Accurate (CIEDE2000) picks closer beads and is nearly as fast as Standard (same default as Auto).
+  metric: "accurate",
   dither: "none",
   ditherStrength: 85,
   cleanup: 0,

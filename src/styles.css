@@ -2453,8 +2453,7 @@ button.zoom-level:hover:not(:disabled) {
 
   .stage-controls,
   .stage-actions,
-  .edit-bar,
-  .edit-bar .edit-outline {
+  .edit-bar {
     flex-wrap: nowrap;
     flex: none;
   }
@@ -2639,13 +2638,6 @@ button.zoom-level:hover:not(:disabled) {
     display: none;
   }
 
-  /* Build mode: "Board done" stays in reach below the colour list. */
-  .build-side .btn-primary {
-    position: sticky;
-    bottom: 0;
-    box-shadow: 0 -8px 12px var(--card);
-  }
-
   .build-side .hint {
     display: none;
   }
@@ -2720,15 +2712,59 @@ button.zoom-level:hover:not(:disabled) {
   min-width: 30px;
 }
 
-.edit-bar .shortcuts > summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--muted);
+.segmented button.icon-only {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  padding-left: 0;
+  padding-right: 0;
 }
 
-.edit-bar .shortcuts[open] {
-  flex-basis: 100%;
+/* "More ▾": a dropdown anchored to the pattern area, so the swipeable bar doesn't clip it. */
+.stage {
+  position: relative;
+}
+
+.edit-more > summary {
+  list-style: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.edit-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.edit-more[open] > summary {
+  background: var(--surface-2);
+}
+
+.edit-more-menu {
+  position: absolute;
+  z-index: 6;
+  right: 14px;
+  margin-top: 6px;
+  width: min(340px, calc(100% - 28px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.edit-more-menu .edit-outline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.edit-more-menu .shortcuts {
+  white-space: normal;
 }
 
 /* ================================================================= Build mode */
@@ -2852,6 +2888,14 @@ button.zoom-level:hover:not(:disabled) {
   opacity: 0.55;
 }
 
+/* "Board done" stays in reach below a long colour list. */
+.build-side .btn-primary {
+  position: sticky;
+  bottom: 0;
+  flex: none;
+  box-shadow: 0 8px 0 var(--card), 0 -8px 12px var(--card);
+}
+
 @media (max-width: 760px) {
   .build-body {
     grid-template-columns: minmax(0, 1fr);
@@ -2888,4 +2932,25 @@ button.zoom-level:hover:not(:disabled) {
 /* Same width as "Done editing", so the toolbar doesn't shift when editing starts or ends. */
 .edit-toggle {
   min-width: 124px;
+}
+
+/* Top bar: New first (it sits in the ☰ menu on phones); links look like the buttons. */
+.top-new {
+  order: -1;
+}
+
+a.top-btn {
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.swatch-btn .in-use {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--link);
+  white-space: nowrap;
 }

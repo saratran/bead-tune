@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { BRUSH_SIZES, type BrushSize } from "../lib/editing";
 import { colorLabel, type BeadColor } from "../lib/palettes";
 import type { CellShape } from "../lib/render";
@@ -104,13 +105,23 @@ export function EditBar({
    */
   outline?: { color: BeadColor; onAdd: () => void; onChooseColor: () => void; margin: boolean; onMargin: (on: boolean) => void };
 }) {
+  const more = useRef<HTMLDetailsElement>(null);
+  const closeMore = () => more.current?.removeAttribute("open");
   return (
     <div className="edit-bar">
-      <div className="segmented" role="radiogroup" aria-label="Edit tool">
+      {/* Icon-only tools (named on hover and for screen readers) keep the bar to one row. */}
+      <div className="segmented tools" role="radiogroup" aria-label="Edit tool">
         {(["paint", "erase", "replace", "pick"] as const).map((t) => (
-          <button key={t} role="radio" aria-checked={tool === t} className={`with-icon ${tool === t ? "on" : ""}`} onClick={() => onTool(t)} title={`${TOOL_HINTS[t]} (${TOOL_KEYS[t]})`}>
+          <button
+            key={t}
+            role="radio"
+            aria-checked={tool === t}
+            aria-label={TOOL_LABELS[t]}
+            className={`icon-only ${tool === t ? "on" : ""}`}
+            onClick={() => onTool(t)}
+            title={`${TOOL_LABELS[t]}: ${TOOL_HINTS[t]} (${TOOL_KEYS[t]})`}
+          >
             <ToolIcon name={t} />
-            {TOOL_LABELS[t]}
           </button>
         ))}
       </div>
@@ -156,28 +167,46 @@ export function EditBar({
           Redo
         </button>
       )}
-      <button className="btn btn-ghost" disabled={!canClear} onClick={onClear}>
-        Clear edits
-      </button>
-      {outline && (
-        <span className="edit-outline">
-          <button className="btn btn-ghost" onClick={outline.onAdd} title="Add a one-bead outline round the shape as it is now (click again for a thicker one)">
-            Add outline
+      {/* Less frequent actions: outline, edge margin, clearing, shortcuts. */}
+      <details className="edit-more" ref={more}>
+        <summary className="btn btn-ghost">More ▾</summary>
+        <div className="edit-more-menu">
+          {outline && (
+            <div className="edit-outline">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  outline.onAdd();
+                  closeMore();
+                }}
+                title="Add a one-bead outline round the shape as it is now (click again for a thicker one)"
+              >
+                Add outline
+              </button>
+              <button className="btn btn-ghost row" onClick={outline.onChooseColor} title="Outline colour" aria-label="Outline colour">
+                <span className="dot big" style={{ background: outline.color.hex }} />
+                {outline.color.code}
+              </button>
+              <span title="Add an empty ring of beads round the pattern (2 beads wider and taller) so the outline isn't cut off. Your edits stay put.">
+                <Toggle label="Edge margin" checked={outline.margin} onChange={outline.onMargin} />
+              </span>
+            </div>
+          )}
+          <button
+            className="btn btn-ghost"
+            disabled={!canClear}
+            onClick={() => {
+              onClear();
+              closeMore();
+            }}
+          >
+            Clear edits
           </button>
-          <button className="btn btn-ghost row" onClick={outline.onChooseColor} title="Outline colour" aria-label="Outline colour">
-            <span className="dot big" style={{ background: outline.color.hex }} />
-            {outline.color.code}
-          </button>
-          <span title="Add an empty ring of beads round the pattern (2 beads wider and taller) so the outline isn't cut off. Your edits stay put.">
-            <Toggle label="Edge margin" checked={outline.margin} onChange={outline.onMargin} />
-          </span>
-        </span>
-      )}
-      <details className="shortcuts">
-        <summary>Shortcuts</summary>
-        <p className="hint">
-          B paint · E erase · R replace · I pick · G fill size · [ ] brush size · Shift-click line · Alt-click pick · ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z redo · Esc done
-        </p>
+          <p className="hint shortcuts">
+            <strong>Shortcuts:</strong> B paint · E erase · R replace · I pick · G fill size · [ ] brush size · Shift-click line · Alt-click pick · ⌘/Ctrl+Z undo ·
+            ⌘/Ctrl+Shift+Z redo · Esc done
+          </p>
+        </div>
       </details>
     </div>
   );

@@ -30,7 +30,7 @@ describe("ImageOptions", () => {
     render(<Harness />);
     expect(screen.getByRole("radio", { name: "Smooth" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: "Off" }).getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByRole("radio", { name: "Standard" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "Accurate" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("slider", { name: /Remove stray beads/ }).closest(".field")!.textContent).toContain("off");
     expect(screen.getByRole("slider", { name: /Min beads per colour/ }).closest(".field")!.textContent).toContain("off");
   });

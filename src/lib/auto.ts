@@ -585,7 +585,7 @@ export const COLOR_PENALTY = 6;
 /** "Balanced" = fewest colours among candidates within this many likeness points of the best. */
 export const BALANCED_WITHIN = 6;
 /** "Most detailed" = most features among candidates within this many likeness points of the best. */
-export const DETAILED_WITHIN = 25;
+export const DETAILED_WITHIN = 10;
 
 /**
  * Picks up to `count` varied suggestions: named picks first (most faithful,
@@ -900,7 +900,7 @@ export function featureToleranceFor(label: string): number | undefined {
 }
 
 export function likenessToleranceFor(label: string): number {
-  return label === "Simplest" ? 0.04 : label === "Most detailed" ? 0.12 : 0.03;
+  return label === "Simplest" ? 0.04 : label === "Most detailed" ? 0.06 : 0.03;
 }
 
 /**
@@ -918,7 +918,7 @@ export function objectiveFor(label: string): (m: Metrics) => number {
     case "Most detailed":
       // Details first; likeness only as a tie-breaker (its tolerance keeps it recognisable).
       // Colours count too: detail usually comes from bolder colours, not from more of them.
-      return (m) => featureCost(m) + 0.15 * likenessCost(m) + 0.3 * colorCost(m);
+      return (m) => featureCost(m) + 0.3 * likenessCost(m) + 0.3 * colorCost(m);
     default: // Most faithful, Smooth shading, Crisp, and tuning from preferences
       return (m) => featureCost(m) + 0.5 * likenessCost(m) + 0.05 * colorCost(m);
   }

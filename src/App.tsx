@@ -95,6 +95,13 @@ type Modal = { kind: "owned" } | { kind: "swap"; from: BeadColor } | { kind: "ou
 
 const MAX_UNDO = 50;
 
+/** One undo step: hand edits plus colour swaps and removed colours. */
+interface EditSnapshot {
+  map: Edits;
+  swaps: Map<string, BeadColor>;
+  excluded: Set<string>;
+}
+
 // Stable ids for decoded images, so cached results can tell images apart.
 const imageIds = new WeakMap<HTMLImageElement, number>();
 let nextImageId = 1;
@@ -180,7 +187,8 @@ export function App() {
 
   // Hand edits (including added outlines), keyed by cell index for a pattern of size `w` × `h`.
   const [edits, setEdits] = useState<{ w: number; h: number; map: Edits }>({ w: 0, h: 0, map: new Map() });
-  const [undoStack, setUndoStack] = useState<Edits[]>([]);
+  // Undo steps cover hand edits and colour edits (swaps, removed colours) together.
+  const [undoStack, setUndoStack] = useState<EditSnapshot[]>([]);
   const [tool, setTool] = useState<EditTool | null>(null);
   const [brush, setBrush] = useState<BeadColor | null>(null);
   // Paint and erase each remember their own brush size.
@@ -188,7 +196,7 @@ export function App() {
   const sizeTool = tool === "erase" ? "erase" : "paint";
   const brushSize = brushSizes[sizeTool];
   const setBrushSize = (size: BrushSize, forTool: "paint" | "erase" = sizeTool) => setBrushSizes((s) => ({ ...s, [forTool]: size }));
-  const [redoStack, setRedoStack] = useState<Edits[]>([]);
+  const [redoStack, setRedoStack] = useState<EditSnapshot[]>([]);
   // Build mode: which beads are placed, for a pattern of size w × h (ignored if the size changes).
   const [build, setBuild] = useState<{ w: number; h: number; placed: Set<number> }>({ w: 0, h: 0, placed: new Set() });
   const [buildOpen, setBuildOpen] = useState(false);
@@ -436,13 +444,20 @@ export function App() {
     if (edits.w > 0) {
       const shift = (m: Edits) => shiftEdits(m, edits.w, d, d, edits.w + 2 * d, edits.h + 2 * d);
       setEdits({ w: edits.w + 2 * d, h: edits.h + 2 * d, map: shift(edits.map) });
-      setUndoStack((u) => u.map(shift));
+      setUndoStack((u) => u.map((step) => ({ ...step, map: shift(step.map) })));
+      setRedoStack((r) => r.map((step) => ({ ...step, map: shift(step.map) })));
     }
     setImageSettings({ ...imageSettings, edgeMargin: on });
   };
 
+  const snapshot = (): EditSnapshot => ({ map: editsFit ? edits.map : new Map(), swaps, excluded });
+  const restore = (step: EditSnapshot) => {
+    setEdits((e) => ({ ...e, map: step.map }));
+    setSwaps(step.swaps);
+    setExcluded(step.excluded);
+  };
   const pushUndo = () => {
-    setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), editsFit ? edits.map : new Map()]);
+    setUndoStack((u) => [...u.slice(-MAX_UNDO + 1), snapshot()]);
     setRedoStack([]);
   };
 
@@ -450,8 +465,15 @@ export function App() {
   const addOutlineNow = () => {
     if (!pattern) return;
     const ring = outlineRing(pattern);
+    const bgKept = !imageSettings.removeBackground;
     if (!ring.cells.length) {
-      setNotice({ text: "Nothing to outline: there's no empty space round the shape. Turn on Edge margin or Remove background.", error: true });
+      // Usually the background is still beads: removing it is what makes room round the subject.
+      setNotice({
+        text: bgKept
+          ? "Nothing to outline: the background is still beads. Turn on Remove background (Image tab) first."
+          : "Nothing to outline: the shape fills the grid. Turn on Edge margin to leave room round it.",
+        error: true,
+      });
       return;
     }
     setEditsAck(false);
@@ -462,23 +484,35 @@ export function App() {
       for (const i of ring.cells) map.set(i, outlineColor);
       return { w: pattern.width, h: pattern.height, map };
     });
-    setNotice({ text: ring.clipped && !edgeMargin ? "Outline added. It's cut off where the shape touches the edge: turn on Edge margin to leave room." : "Outline added" });
+    setNotice({
+      text: bgKept
+        ? "Outline added round the whole picture. To outline just the subject, undo and turn on Remove background (Image tab)."
+        : ring.clipped && !edgeMargin
+          ? "Outline added. It's cut off where the shape touches the edge: turn on Edge margin to leave room."
+          : "Outline added",
+    });
   };
 
   const undo = () => {
     const prev = undoStack[undoStack.length - 1];
     if (!prev) return;
     setUndoStack(undoStack.slice(0, -1));
-    setRedoStack((r) => [...r, editsFit ? edits.map : new Map()]);
-    setEdits((e) => ({ ...e, map: prev }));
+    setRedoStack((r) => [...r, snapshot()]);
+    restore(prev);
   };
 
   const redo = () => {
     const next = redoStack[redoStack.length - 1];
     if (!next) return;
     setRedoStack(redoStack.slice(0, -1));
-    setUndoStack((u) => [...u, editsFit ? edits.map : new Map()]);
-    setEdits((e) => ({ ...e, map: next }));
+    setUndoStack((u) => [...u, snapshot()]);
+    restore(next);
+  };
+
+  /** "Undo colour edits": back to the pattern's own colours, as one undo step. */
+  const resetColourEdits = () => {
+    pushUndo();
+    resetEdits();
   };
 
   /** Eyedropper on the source thumbnail: sample the clicked pixel as the background colour. */
@@ -506,6 +540,7 @@ export function App() {
   const boardsY = pattern ? Math.ceil(pattern.height / boardSize) : 0;
 
   const swapColor = (from: BeadColor, to: BeadColor) => {
+    pushUndo();
     const next = new Map<string, BeadColor>();
     for (const [k, v] of swaps) next.set(k, v.id === from.id ? to : v);
     if (from.id !== to.id) next.set(from.id, to);
@@ -516,6 +551,7 @@ export function App() {
   };
 
   const removeColor = (c: BeadColor) => {
+    pushUndo();
     const nextExcluded = new Set(excluded).add(c.id);
     const nextSwaps = new Map(swaps);
     for (const [k, v] of swaps) {
@@ -742,16 +778,17 @@ export function App() {
   // Editing shortcuts (while editing, not typing, no dialog open): tools, brush size, undo/redo, Esc.
   const editKeys = useRef<(e: KeyboardEvent) => void>(() => {});
   editKeys.current = (e: KeyboardEvent) => {
-    if (!tool) return;
     const typing = e.target instanceof Element && e.target.closest("input, textarea, select");
     if (typing || document.querySelector(".modal-backdrop")) return;
     const key = e.key.toLowerCase();
+    // Undo/redo work whenever there's something to undo (colour edits happen outside edit mode too).
     if ((e.metaKey || e.ctrlKey) && (key === "z" || key === "y")) {
       e.preventDefault();
       if (key === "y" || e.shiftKey) redo();
       else undo();
       return;
     }
+    if (!tool) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const tools: Record<string, EditTool> = { b: "paint", p: "paint", e: "erase", r: "replace", i: "pick" };
     if (tools[key]) setTool(tools[key]);
@@ -811,7 +848,11 @@ export function App() {
         margin: edgeMargin,
         onMargin: setEdgeMargin,
       }}
-      onClear={clearHandEdits}
+      onClear={() => {
+        // Clearing from the editor is one undo step (Undo brings the edits back).
+        pushUndo();
+        setEdits((e) => ({ ...e, map: new Map() }));
+      }}
     />
   );
 
@@ -917,7 +958,7 @@ export function App() {
           </button>
           {menuOpen && <div className="menu-scrim" onClick={() => setMenuOpen(false)} />}
           <div className={`top-menu ${menuOpen ? "open" : ""}`} onClick={() => setMenuOpen(false)}>
-            <button className="top-btn" disabled={!image && !project} onClick={() => void newProject()} title="Start a new project (asks first if this one isn't saved)">
+            <button className="top-btn top-new" disabled={!image && !project} onClick={() => void newProject()} title="Start a new project (asks first if this one isn't saved)">
               New
             </button>
             <button className="top-btn" disabled={!image || !project} onClick={() => setProjectsOpenState("saveAs")} title="Save as a new version with a different name">
@@ -992,6 +1033,8 @@ export function App() {
                   {SIZES.map((sz) => (
                     <button
                       key={sz.id}
+                      aria-label={sz.label}
+                      title={sz.label}
                       role="radio"
                       aria-checked={choice.size === sz.id}
                       className={choice.size === sz.id ? "on" : ""}
@@ -1002,7 +1045,7 @@ export function App() {
                         setChoice({ size: sz.id, ids: kept.length ? kept : [avail[0]!.id] });
                       }}
                     >
-                      {sz.label}
+                      {sz.label.split(" ")[0]}
                     </button>
                   ))}
                 </div>
@@ -1250,7 +1293,7 @@ export function App() {
                   {swaps.size > 0 && excluded.size > 0 && " · "}
                   {excluded.size > 0 && `${excluded.size} removed`}
                 </span>
-                <button className="link-btn" onClick={resetEdits}>
+                <button className="link-btn" onClick={resetColourEdits}>
                   Undo colour edits
                 </button>
               </div>
@@ -1530,6 +1573,8 @@ export function App() {
           title={`Swap ${colorLabel(modal.from)} for…`}
           colors={brand.colors}
           current={modal.from.id}
+          nearTo={modal.from}
+          inUse={new Set(pattern?.colors.map((c) => c.id) ?? [])}
           onPick={(to) => swapColor(modal.from, to)}
           onClose={() => setModal(null)}
         />
