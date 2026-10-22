@@ -330,6 +330,11 @@ export function AutoDialog({
   const shownBookmarks = sortBookmarks(bookmarks, bookmarkSort);
   const [showSpace, setShowSpace] = useState(!results);
   const abort = useRef<AbortController | null>(null);
+  /** Closes the panel, stopping a search or tuning run first. */
+  const closePanel = () => {
+    abort.current?.abort();
+    onClose();
+  };
 
   // Editing keeps the preset selected; it shows as "(modified)" until saved or reverted.
   const setConfig = (c: AutoConfig) => {
@@ -339,7 +344,8 @@ export function AutoDialog({
   const setSpace = <K extends keyof SearchSpace>(key: K, value: SearchSpace[K]) => setConfig({ ...config, space: { ...config.space, [key]: value } });
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !progress && naming === null && !viewing && onClose();
+    // Esc closes (stopping a search that's running), unless a sub-view is open.
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && naming === null && !viewing && closePanel();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, progress, naming, viewing]);
@@ -364,7 +370,11 @@ export function AutoDialog({
     })());
   useEffect(
     () => () => {
-      void engine.current?.then((e) => e.dispose?.());
+      // Forget the pool as well as stopping it: React may mount the panel again (StrictMode
+      // does on purpose), and a stopped pool must never be reused — its jobs would never finish.
+      const stopping = engine.current;
+      engine.current = null;
+      void stopping?.then((e) => e.dispose?.());
     },
     [],
   );
@@ -563,7 +573,7 @@ export function AutoDialog({
               ★ Results{(results?.length ?? 0) + bookmarks.length > 0 ? ` (${(results?.length ?? 0) + bookmarks.length})` : ""}
             </button>
           </div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={!!progress}>
+          <button className="icon-btn" onClick={closePanel} aria-label="Close" title={progress ? "Stop and close" : "Close"}>
             ×
           </button>
         </div>

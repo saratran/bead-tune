@@ -52,6 +52,26 @@ describe("worker pool", () => {
     expect((await evaluate(cs)).every((r) => r !== null)).toBe(true);
   }, 30000);
 
+  test("a stopped pool answers at once instead of hanging", async () => {
+    const p = await workerEngine(img, base, { url, size: 2 });
+    p.dispose?.();
+    const started = performance.now();
+    const out = await p.forTone("natural")(enumerateCandidates(tiny).slice(0, 4));
+    expect(out).toEqual([null, null, null, null]);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  test("Stop returns straight away, even with work still on the workers", async () => {
+    pool = await workerEngine(img, base, { url, size: 1 });
+    const ctrl = new AbortController();
+    const pending = pool.forTone("natural")(enumerateCandidates(tiny), undefined, ctrl.signal);
+    ctrl.abort();
+    const started = performance.now();
+    const out = await pending;
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(out.every((r) => r === null)).toBe(true);
+  });
+
   test("a worker that can't load rejects, so Auto can fall back", async () => {
     await expect(workerEngine(img, base, { url: new URL("./no-such-worker.ts", import.meta.url).href, size: 1, timeoutMs: 3000 })).rejects.toThrow();
   });

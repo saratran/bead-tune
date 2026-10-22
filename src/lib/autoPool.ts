@@ -109,13 +109,31 @@ export async function workerEngine(
 
   // Each (tone, candidate) is evaluated once; refinement often comes back to the same point.
   const cache = new Map<string, Promise<Evaluated | null>>();
+  let disposed = false;
+
+  /** `p`, or null as soon as `signal` aborts — Stop never waits on a worker. */
+  const untilAbort = (p: Promise<Evaluated | null>, signal?: AbortSignal): Promise<Evaluated | null> =>
+    !signal
+      ? p
+      : new Promise((resolve) => {
+          if (signal.aborted) return resolve(null);
+          const onAbort = () => resolve(null);
+          signal.addEventListener("abort", onAbort, { once: true });
+          void p.then((r) => {
+            signal.removeEventListener("abort", onAbort);
+            resolve(r);
+          });
+        });
+
   const evaluateOne = (candidate: Candidate, tone: Tone, signal?: AbortSignal): Promise<Evaluated | null> => {
+    // A stopped pool answers at once rather than queueing work no worker will do.
+    if (disposed || signal?.aborted) return Promise.resolve(null);
     const key = JSON.stringify(candidate);
     const cacheKey = `${tone}|${key}`;
     const hit = cache.get(cacheKey);
-    if (hit) return hit;
+    if (hit) return untilAbort(hit, signal);
     const promise = new Promise<Evaluated | null>((resolve) => {
-      queue.push({
+      const job: Job = {
         id: nextId++,
         key,
         tone,
@@ -125,11 +143,24 @@ export async function workerEngine(
           if (skipped) cache.delete(cacheKey); // stopped before it ran: try again next time
           resolve(r);
         },
-      });
+      };
+      queue.push(job);
+      // Aborting drops it from the queue straight away (not only when a worker frees up).
+      signal?.addEventListener(
+        "abort",
+        () => {
+          const at = queue.indexOf(job);
+          if (at >= 0) {
+            queue.splice(at, 1);
+            job.resolve(null, true);
+          }
+        },
+        { once: true },
+      );
     });
     cache.set(cacheKey, promise);
     pump();
-    return promise;
+    return untilAbort(promise, signal);
   };
 
   const tones = new Map<Tone, EvaluateMany>();
@@ -151,6 +182,7 @@ export async function workerEngine(
       return tones.get(tone)!;
     },
     dispose() {
+      disposed = true;
       stop();
       for (const job of queue.splice(0)) job.resolve(null, true);
       running.forEach((job, w) => job && finish(w, null));

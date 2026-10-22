@@ -10,9 +10,11 @@ import { rm } from "node:fs/promises";
 const outdir = "dist";
 await rm(outdir, { recursive: true, force: true });
 
-const pages = await Bun.build({ entrypoints: ["./index.html", "./guide.html"], outdir, minify: true, splitting: true });
+// Production React: smaller and faster, and without development-only double effects.
+const define = { "process.env.NODE_ENV": JSON.stringify("production") };
+const pages = await Bun.build({ entrypoints: ["./index.html", "./guide.html"], outdir, minify: true, splitting: true, define });
 // Auto's Web Worker is a separate bundle (the HTML bundler doesn't follow `new Worker(...)`).
-const worker = await Bun.build({ entrypoints: ["./src/lib/autoWorker.ts"], outdir, naming: "auto-worker.js", target: "browser", minify: true });
+const worker = await Bun.build({ entrypoints: ["./src/lib/autoWorker.ts"], outdir, naming: "auto-worker.js", target: "browser", minify: true, define });
 
 for (const out of [pages, worker]) {
   if (!out.success) {
